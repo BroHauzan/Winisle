@@ -1,13 +1,29 @@
 {
-  "name": "isle-lint",
+  "name": "isle",
   "private": true,
-  "description": "Lint tools for Isle's GNOME Shell extension; nothing here is shipped.",
+  "type": "module",
+  "description": "A notch-style island for the GNOME desktop: music with synced lyrics, calls, focus timer, reminders, shelf, calendar, alerts, and voice assistant.",
   "license": "GPL-3.0-or-later",
   "scripts": {
-    "lint": "eslint"
+    "dev": "vite --host 0.0.0.0 --port 3000",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 3000",
+    "lint": "tsc --noEmit"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "eslint": "10.12.0"
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "eslint": "10.12.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  },
+  "dependencies": {
+    "lucide-react": "^1.61.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   }
 }

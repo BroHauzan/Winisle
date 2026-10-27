@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    user-select: none;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  }
+}
+
+.tnum {
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes isleBarDance1 {
+  0%, 100% { height: 4px; }
+  50% { height: 13px; }
+}
+@keyframes isleBarDance2 {
+  0%, 100% { height: 12px; }
+  40% { height: 4px; }
+  80% { height: 14px; }
+}
+@keyframes isleBarDance3 {
+  0%, 100% { height: 6px; }
+  35% { height: 14px; }
+  70% { height: 5px; }
+}
+@keyframes isleBarDance4 {
+  0%, 100% { height: 10px; }
+  60% { height: 4px; }
+}

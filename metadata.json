@@ -1,0 +1,5 @@
+{
+  "name": "Isle — GNOME Notch Island",
+  "description": "Interactive web simulation of Isle, a notch-style island for the GNOME top bar with synced lyrics, calls, Pomodoro focus timer, reminders, clipboard & file shelf, calendar, system alerts, AI plan usage, and voice assistant.",
+  "requestFramePermissions": []
+}
