@@ -30,12 +30,31 @@ jobs:
           node-version: '22'
 
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        run: npm install --legacy-peer-deps --include=dev
 
-      - name: Build Web App & Server
+      - name: Build Web App (Vite)
+        run: npx vite build
+
+      - name: Verify Web Dist
+        shell: pwsh
         run: |
-          npm run build
-          npm run build:server
+          if (-not (Test-Path "dist/index.html")) {
+            Write-Error "CRITICAL: dist/index.html does not exist! Vite build failed."
+            exit 1
+          }
+          Write-Host "Vite build verified! dist/index.html exists."
+
+      - name: Build Desktop Server
+        run: node scripts/generate-tray-icon.mjs && node scripts/build-server.mjs
+
+      - name: Verify Server Dist
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist-server/server.cjs")) {
+            Write-Error "CRITICAL: dist-server/server.cjs does not exist!"
+            exit 1
+          }
+          Write-Host "Server build verified! dist-server/server.cjs exists."
 
       - name: Build WinIsleSetup.exe via Electron Builder
         run: npx electron-builder --win nsis --x64 --publish never
