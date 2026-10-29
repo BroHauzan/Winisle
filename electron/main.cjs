@@ -22,6 +22,15 @@ if (!gotSingleInstanceLock) {
   app.quit();
 }
 
+// Lightweight Chromium flags: disables unused telemetry, crash dumps, and translation engines
+// to ensure near 0% idle CPU and minimal RAM footprint for the overlay
+app.commandLine.appendSwitch('disable-breakpad');
+app.commandLine.appendSwitch('disable-component-update');
+app.commandLine.appendSwitch('disable-domain-reliability');
+app.commandLine.appendSwitch('disable-sync');
+app.commandLine.appendSwitch('disable-features', 'Translate,CalculateNativeWinOcclusion,AutofillServerCommunication');
+
+
 /**
  * Check if local server on PORT is already responding
  */

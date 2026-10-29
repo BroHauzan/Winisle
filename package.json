@@ -29,6 +29,7 @@
       "electron/**/*",
       "package.json"
     ],
+    "compression": "maximum",
     "win": {
       "target": [
         {
