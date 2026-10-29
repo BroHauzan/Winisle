@@ -48,7 +48,6 @@
       "createStartMenuShortcut": true,
       "shortcutName": "WinIsle",
       "runAfterFinish": true,
-      "include": "electron/installer.nsh",
       "artifactName": "WinIsleSetup.${ext}"
     }
   },
