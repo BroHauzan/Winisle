@@ -12,14 +12,14 @@
     "build": "vite build",
     "build:server": "node scripts/build-server.mjs",
     "electron:dev": "npm run build:server && electron .",
-    "build:exe": "npm run build && npm run build:server && electron-builder --win nsis --x64",
-    "dist": "npm run build && npm run build:server && electron-builder --win nsis --x64",
+    "build:exe": "npm run build && npm run build:server && electron-builder --win nsis --x64 --publish never && node scripts/package-release-zip.mjs",
+    "dist": "npm run build && npm run build:server && electron-builder --win nsis --x64 --publish never && node scripts/package-release-zip.mjs",
     "start": "node server.ts",
     "lint": "tsc --noEmit"
   },
   "build": {
     "appId": "com.isle.dynamicisland",
-    "productName": "Isle Dynamic Island",
+    "productName": "WinIsle",
     "directories": {
       "output": "release"
     },
@@ -38,7 +38,7 @@
           ]
         }
       ],
-      "artifactName": "Setup.${ext}"
+      "artifactName": "WinIsleSetup.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -46,10 +46,10 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Isle Dynamic Island",
+      "shortcutName": "WinIsle",
       "runAfterFinish": true,
       "include": "electron/installer.nsh",
-      "artifactName": "Setup.${ext}"
+      "artifactName": "WinIsleSetup.${ext}"
     }
   },
   "devDependencies": {
