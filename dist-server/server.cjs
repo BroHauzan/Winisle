@@ -45769,6 +45769,7 @@ module.exports = __toCommonJS(server_exports);
 var import_http = require("http");
 var import_fs2 = __toESM(require("fs"), 1);
 var import_path = __toESM(require("path"), 1);
+var import_url = require("url");
 var import_child_process = require("child_process");
 var import_util = require("util");
 var import_express = __toESM(require_express2(), 1);
@@ -69781,6 +69782,8 @@ function getApiKeyFromEnv() {
 }
 
 // server.ts
+var import_meta = {};
+var currentDir = typeof __dirname !== "undefined" ? __dirname : typeof import_meta?.url === "string" ? import_path.default.dirname((0, import_url.fileURLToPath)(import_meta.url)) : process.cwd();
 var execAsync = (0, import_util.promisify)(import_child_process.exec);
 var app = (0, import_express.default)();
 var PORT = Number(process.env.PORT) || 3e3;
@@ -71906,21 +71909,45 @@ async function startServer(customPort) {
       }
     }
   });
-  const useStaticDist = process.env.NODE_ENV === "production" || process.env.ISLE_ELECTRON_STATIC === "1";
-  const distDir = process.env.ISLE_DIST_DIR || import_path.default.resolve(process.cwd(), "dist");
-  if (useStaticDist && import_fs2.default.existsSync(distDir)) {
-    app.use(import_express.default.static(distDir));
-    app.use((_req, res) => {
-      res.sendFile(import_path.default.join(distDir, "index.html"));
-    });
+  const isDev = process.env.NODE_ENV !== "production" && process.env.ISLE_ELECTRON_STATIC !== "1";
+  if (isDev) {
+    try {
+      const vitePkg = "vite";
+      const { createServer: createViteServer } = await import(vitePkg);
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa"
+      });
+      app.use(vite.middlewares);
+    } catch (viteErr) {
+      console.warn("Vite dev server middleware unavailable, continuing without Vite:", viteErr);
+    }
   } else {
-    const vitePkg = "vite";
-    const { createServer: createViteServer } = await import(vitePkg);
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa"
+    const candidateDistDirs = [
+      process.env.ISLE_DIST_DIR,
+      import_path.default.resolve(process.cwd(), "dist"),
+      import_path.default.join(currentDir, "dist"),
+      import_path.default.join(currentDir, "..", "dist")
+    ].filter(Boolean);
+    const resolvedDistDir = candidateDistDirs.find((dir) => {
+      try {
+        return import_fs2.default.existsSync(import_path.default.join(dir, "index.html"));
+      } catch {
+        return false;
+      }
     });
-    app.use(vite.middlewares);
+    const targetDir = resolvedDistDir || candidateDistDirs[0] || import_path.default.resolve(process.cwd(), "dist");
+    if (import_fs2.default.existsSync(targetDir)) {
+      app.use(import_express.default.static(targetDir));
+      app.use((_req, res) => {
+        const indexPath = import_path.default.join(targetDir, "index.html");
+        if (import_fs2.default.existsSync(indexPath)) {
+          res.sendFile(indexPath);
+        } else {
+          res.status(200).send('<!DOCTYPE html><html><body style="background:transparent;color:#fff;font-family:sans-serif;display:flex;justify-content:center;padding-top:10px;"><div style="background:#09090b;padding:8px 16px;border-radius:20px;font-size:12px;border:1px solid #27272a;">WinIsle Starting...</div></body></html>');
+        }
+      });
+    }
   }
   return new Promise((resolve) => {
     httpServer.on("error", (err) => {

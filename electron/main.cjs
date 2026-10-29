@@ -1,8 +1,17 @@
-const { app, BrowserWindow, screen, ipcMain, globalShortcut } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, globalShortcut, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { spawn } = require('child_process');
+
+// Catch any unhandled exceptions to avoid annoying crash dialogs in production
+process.on('uncaughtException', (err) => {
+  console.error('[WinIsle Main Process] Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[WinIsle Main Process] Unhandled Rejection:', reason);
+});
 
 const PORT = Number(process.env.PORT) || 3000;
 const SERVER_URL = `http://127.0.0.1:${PORT}`;
@@ -12,7 +21,11 @@ const SERVER_URL = `http://127.0.0.1:${PORT}`;
 const OVERLAY_WIDTH = 740;
 const OVERLAY_HEIGHT = 340;
 
+// High-resolution embedded 32x32 Dynamic Island pill icon (PNG base64) so tray icon never fails
+const TRAY_ICON_BASE64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAZklEQVR4nGNgGAWjYBSMglFAJPj///8zUvGAWEo1x8A0ysmp/KcUk+wIalpOliOobTmyI2jqAH5xLTgm2wGUBD8xDiDaEQMWAoMmDQxoLqC2IygujAakJKSGYyi2dBSMglEwCugBAJeCV9JYDherAAAAAElFTkSuQmCC';
+
 let mainWindow = null;
+let systemTray = null;
 let devServerProcess = null;
 let embeddedServerInstance = null;
 
@@ -29,7 +42,6 @@ app.commandLine.appendSwitch('disable-component-update');
 app.commandLine.appendSwitch('disable-domain-reliability');
 app.commandLine.appendSwitch('disable-sync');
 app.commandLine.appendSwitch('disable-features', 'Translate,CalculateNativeWinOcclusion,AutofillServerCommunication');
-
 
 /**
  * Check if local server on PORT is already responding
@@ -68,52 +80,92 @@ async function ensureLocalBackendRunning() {
     return;
   }
 
-  const distDir = path.join(__dirname, '..', 'dist');
-  const bundledServerPath = path.join(__dirname, '..', 'dist-server', 'server.cjs');
+  // 1. Locate bundled Server across possible packaged / dev paths
+  const candidateServerPaths = [
+    path.join(__dirname, '..', 'dist-server', 'server.cjs'),
+    path.join(app.getAppPath(), 'dist-server', 'server.cjs'),
+    path.join(process.resourcesPath || '', 'app.asar', 'dist-server', 'server.cjs'),
+    path.join(process.resourcesPath || '', 'dist-server', 'server.cjs'),
+  ];
+
+  const bundledServerPath = candidateServerPaths.find((p) => {
+    try {
+      return fs.existsSync(p);
+    } catch {
+      return false;
+    }
+  });
+
+  const candidateDistDirs = [
+    path.join(__dirname, '..', 'dist'),
+    path.join(app.getAppPath(), 'dist'),
+    path.join(process.resourcesPath || '', 'app.asar', 'dist'),
+    path.join(process.resourcesPath || '', 'dist'),
+  ];
+
+  const distDir = candidateDistDirs.find((d) => {
+    try {
+      return fs.existsSync(path.join(d, 'index.html'));
+    } catch {
+      return false;
+    }
+  }) || path.join(app.getAppPath(), 'dist');
 
   process.env.PORT = String(PORT);
   process.env.ISLE_MANUAL_START = '1';
+  process.env.NODE_ENV = 'production';
+  process.env.ISLE_ELECTRON_STATIC = '1';
+  process.env.ISLE_DIST_DIR = distDir;
 
-  // 1. Prefer bundled CommonJS server (used in packaged Setup.exe and production builds)
-  if (fs.existsSync(bundledServerPath)) {
+  // 1. In-process bundled CommonJS server (Used in production Setup.exe and prebuilt server)
+  if (bundledServerPath) {
     try {
-      process.env.NODE_ENV = 'production';
-      process.env.ISLE_ELECTRON_STATIC = '1';
-      process.env.ISLE_DIST_DIR = distDir;
       const serverMod = require(bundledServerPath);
       if (typeof serverMod.startServer === 'function') {
         embeddedServerInstance = await serverMod.startServer(PORT);
-        return;
+        const ready = await waitForServerReady(8000);
+        if (ready) return;
       }
     } catch (err) {
       console.error('Failed to start bundled server in-process:', err);
     }
   }
 
-  // 2. Fallback for development (`electron .` without running `npm run build:server` first)
-  const rootDir = path.join(__dirname, '..');
-  const tsxBin = path.join(
-    rootDir,
-    'node_modules',
-    '.bin',
-    process.platform === 'win32' ? 'tsx.cmd' : 'tsx'
-  );
-  const cmd = fs.existsSync(tsxBin) ? tsxBin : 'npx';
-  const args = fs.existsSync(tsxBin) ? ['server.ts'] : ['tsx', 'server.ts'];
+  // 2. Fallback ONLY for development mode (`electron .` without precompiling server)
+  // NEVER attempt spawn in packaged production mode
+  if (!app.isPackaged) {
+    try {
+      const rootDir = path.join(__dirname, '..');
+      const tsxBin = path.join(
+        rootDir,
+        'node_modules',
+        '.bin',
+        process.platform === 'win32' ? 'tsx.cmd' : 'tsx'
+      );
 
-  devServerProcess = spawn(cmd, args, {
-    cwd: rootDir,
-    env: {
-      ...process.env,
-      PORT: String(PORT),
-      ISLE_MANUAL_START: '0',
-    },
-    stdio: 'ignore',
-    windowsHide: true,
-    shell: process.platform === 'win32',
-  });
+      if (fs.existsSync(tsxBin)) {
+        devServerProcess = spawn(tsxBin, ['server.ts'], {
+          cwd: rootDir,
+          env: {
+            ...process.env,
+            PORT: String(PORT),
+            ISLE_MANUAL_START: '0',
+          },
+          stdio: 'ignore',
+          windowsHide: true,
+          shell: false,
+        });
 
-  await waitForServerReady(12000);
+        devServerProcess.on('error', (spawnErr) => {
+          console.warn('Dev server process spawn error (safely handled):', spawnErr?.message);
+        });
+
+        await waitForServerReady(10000);
+      }
+    } catch (spawnErr) {
+      console.warn('Spawn fallback skipped or failed:', spawnErr?.message);
+    }
+  }
 }
 
 /**
@@ -130,6 +182,137 @@ function positionWindowTopCenter(win) {
     y: targetY,
     width: OVERLAY_WIDTH,
     height: OVERLAY_HEIGHT,
+  });
+}
+
+/**
+ * Create Windows System Tray Icon in Notification Area ("Show hidden icons" ^ menu)
+ * Allows user to control WinIsle, toggle visibility, and exit completely
+ */
+function createSystemTray() {
+  if (systemTray) return;
+
+  let trayImage;
+  const iconCandidatePaths = [
+    path.join(__dirname, 'tray-icon.png'),
+    path.join(app.getAppPath(), 'electron', 'tray-icon.png'),
+    path.join(process.resourcesPath || '', 'app.asar', 'electron', 'tray-icon.png'),
+    path.join(process.resourcesPath || '', 'electron', 'tray-icon.png'),
+  ];
+
+  const foundPath = iconCandidatePaths.find((p) => {
+    try {
+      return fs.existsSync(p);
+    } catch {
+      return false;
+    }
+  });
+
+  if (foundPath) {
+    trayImage = nativeImage.createFromPath(foundPath);
+  } else {
+    trayImage = nativeImage.createFromDataURL(TRAY_ICON_BASE64);
+  }
+
+  // Windows system tray prefers 16x16 icon
+  try {
+    trayImage = trayImage.resize({ width: 16, height: 16 });
+  } catch {
+    // ignore
+  }
+
+  systemTray = new Tray(trayImage);
+  systemTray.setToolTip('WinIsle - Dynamic Island');
+
+  const updateContextMenu = () => {
+    const isVisible = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible();
+    const isAlwaysOnTop = mainWindow && !mainWindow.isDestroyed() && mainWindow.isAlwaysOnTop();
+
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        label: 'WinIsle Dynamic Island',
+        enabled: false,
+      },
+      { type: 'separator' },
+      {
+        label: isVisible ? 'Sembunyikan Island' : 'Tampilkan Island',
+        click: () => {
+          if (!mainWindow || mainWindow.isDestroyed()) {
+            createOverlayWindow();
+          } else if (mainWindow.isVisible()) {
+            mainWindow.hide();
+          } else {
+            mainWindow.show();
+            mainWindow.focus();
+          }
+          updateContextMenu();
+        },
+      },
+      {
+        label: 'Buka / Fokus Assistant (Alt+Q)',
+        click: () => {
+          if (!mainWindow || mainWindow.isDestroyed()) {
+            createOverlayWindow();
+          } else {
+            mainWindow.show();
+            mainWindow.focus();
+            mainWindow.setIgnoreMouseEvents(false);
+            mainWindow.webContents.send('toggle-isle-assistant');
+          }
+        },
+      },
+      {
+        label: 'Reset Posisi ke Tengah Atas',
+        click: () => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            positionWindowTopCenter(mainWindow);
+            mainWindow.show();
+          }
+        },
+      },
+      {
+        label: 'Always on Top',
+        type: 'checkbox',
+        checked: Boolean(isAlwaysOnTop),
+        click: (menuItem) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.setAlwaysOnTop(menuItem.checked, 'screen-saver');
+          }
+        },
+      },
+      { type: 'separator' },
+      {
+        label: 'Restart WinIsle',
+        click: () => {
+          app.relaunch();
+          app.exit(0);
+        },
+      },
+      {
+        label: 'Keluar dari WinIsle',
+        click: () => {
+          app.isQuitting = true;
+          app.quit();
+        },
+      },
+    ]);
+
+    systemTray.setContextMenu(contextMenu);
+  };
+
+  updateContextMenu();
+
+  // Left click on tray toggles or focuses WinIsle
+  systemTray.on('click', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      createOverlayWindow();
+    } else if (mainWindow.isVisible()) {
+      mainWindow.focus();
+    } else {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+    updateContextMenu();
   });
 }
 
@@ -170,7 +353,15 @@ function createOverlayWindow() {
   // Enable click-through on transparent areas by default while forwarding mousemove events
   mainWindow.setIgnoreMouseEvents(true, { forward: true });
 
-  mainWindow.loadURL(SERVER_URL);
+  // Safe loadURL with automatic retry
+  mainWindow.loadURL(SERVER_URL).catch((err) => {
+    console.warn('[WinIsle] Initial loadURL failed, retrying in 1s...', err?.message);
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.loadURL(SERVER_URL).catch((e) => console.error('[WinIsle] Secondary loadURL error:', e));
+      }
+    }, 1200);
+  });
 
   // Re-center if monitor resolution or display scaling changes
   const handleDisplayChange = () => positionWindowTopCenter(mainWindow);
@@ -207,13 +398,19 @@ app.whenReady().then(async () => {
     }
   }
 
+  // Initialize System Tray immediately so user always sees WinIsle in Notification Area ("Show hidden icons")
+  createSystemTray();
+
   await ensureLocalBackendRunning();
   createOverlayWindow();
 
   // Register global Alt+Q shortcut so user can summon Isle Assistant even over fullscreen games/apps
   try {
     globalShortcut.register('Alt+Q', () => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        createOverlayWindow();
+        return;
+      }
       mainWindow.setIgnoreMouseEvents(false);
       mainWindow.show();
       mainWindow.focus();
@@ -228,11 +425,20 @@ app.on('second-instance', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     positionWindowTopCenter(mainWindow);
     mainWindow.show();
+    mainWindow.focus();
   }
 });
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  if (systemTray && !systemTray.isDestroyed()) {
+    try {
+      systemTray.destroy();
+    } catch {
+      // ignore
+    }
+    systemTray = null;
+  }
   if (embeddedServerInstance && typeof embeddedServerInstance.close === 'function') {
     try {
       embeddedServerInstance.close();
@@ -250,7 +456,8 @@ app.on('will-quit', () => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  // If app is not explicitly quitting, keep running in System Tray
+  if (app.isQuitting) {
     app.quit();
   }
 });

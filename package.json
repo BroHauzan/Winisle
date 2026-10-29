@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
-    "build:server": "node scripts/build-server.mjs",
+    "build:server": "node scripts/generate-tray-icon.mjs && node scripts/build-server.mjs",
     "electron:dev": "npm run build:server && electron .",
     "build:exe": "npm run build && npm run build:server && electron-builder --win nsis --x64 --publish never && node scripts/package-release-zip.mjs",
     "dist": "npm run build && npm run build:server && electron-builder --win nsis --x64 --publish never && node scripts/package-release-zip.mjs",

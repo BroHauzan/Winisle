@@ -1,11 +1,19 @@
 import { createServer } from 'http';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import express, { Request, Response, NextFunction } from 'express';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { WebSocketServer, WebSocket } from 'ws';
+
+const currentDir =
+  typeof __dirname !== 'undefined'
+    ? __dirname
+    : typeof import.meta?.url === 'string'
+    ? path.dirname(fileURLToPath(import.meta.url))
+    : process.cwd();
 
 const execAsync = promisify(exec);
 
@@ -2666,23 +2674,50 @@ export async function startServer(customPort?: number) {
     }
   });
 
-  const useStaticDist =
-    process.env.NODE_ENV === 'production' || process.env.ISLE_ELECTRON_STATIC === '1';
-  const distDir = process.env.ISLE_DIST_DIR || path.resolve(process.cwd(), 'dist');
+  const isDev =
+    process.env.NODE_ENV !== 'production' && process.env.ISLE_ELECTRON_STATIC !== '1';
 
-  if (useStaticDist && fs.existsSync(distDir)) {
-    app.use(express.static(distDir));
-    app.use((_req, res) => {
-      res.sendFile(path.join(distDir, 'index.html'));
-    });
+  if (isDev) {
+    try {
+      const vitePkg = 'vite';
+      const { createServer: createViteServer } = await import(vitePkg);
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } catch (viteErr) {
+      console.warn('Vite dev server middleware unavailable, continuing without Vite:', viteErr);
+    }
   } else {
-    const vitePkg = 'vite';
-    const { createServer: createViteServer } = await import(vitePkg);
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
+    // Robustly locate the static UI distribution folder
+    const candidateDistDirs = [
+      process.env.ISLE_DIST_DIR,
+      path.resolve(process.cwd(), 'dist'),
+      path.join(currentDir, 'dist'),
+      path.join(currentDir, '..', 'dist'),
+    ].filter(Boolean) as string[];
+
+    const resolvedDistDir = candidateDistDirs.find((dir) => {
+      try {
+        return fs.existsSync(path.join(dir, 'index.html'));
+      } catch {
+        return false;
+      }
     });
-    app.use(vite.middlewares);
+
+    const targetDir = resolvedDistDir || candidateDistDirs[0] || path.resolve(process.cwd(), 'dist');
+    if (fs.existsSync(targetDir)) {
+      app.use(express.static(targetDir));
+      app.use((_req, res) => {
+        const indexPath = path.join(targetDir, 'index.html');
+        if (fs.existsSync(indexPath)) {
+          res.sendFile(indexPath);
+        } else {
+          res.status(200).send('<!DOCTYPE html><html><body style="background:transparent;color:#fff;font-family:sans-serif;display:flex;justify-content:center;padding-top:10px;"><div style="background:#09090b;padding:8px 16px;border-radius:20px;font-size:12px;border:1px solid #27272a;">WinIsle Starting...</div></body></html>');
+        }
+      });
+    }
   }
 
   return new Promise<typeof httpServer>((resolve) => {

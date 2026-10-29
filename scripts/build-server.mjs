@@ -22,6 +22,9 @@ await build({
   sourcemap: false,
   minify: false,
   external: ['vite', 'fsevents', 'bufferutil', 'utf-8-validate'],
+  logOverride: {
+    'empty-import-meta': 'silent',
+  },
 });
 
 console.log('Successfully bundled server.ts -> dist-server/server.cjs');
