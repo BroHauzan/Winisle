@@ -87,6 +87,8 @@ function getUnpackedDistDir() {
     path.join(app.getAppPath(), 'dist'),
     path.join(process.resourcesPath || '', 'dist'),
     path.join(process.resourcesPath || '', 'app.asar', 'dist'),
+    path.join(__dirname, '..'),
+    app.getAppPath(),
   ].filter(Boolean);
 
   return (
@@ -142,8 +144,10 @@ async function ensureLocalBackendRunning() {
 
   process.env.PORT = String(PORT);
   process.env.ISLE_MANUAL_START = '1';
-  process.env.NODE_ENV = 'production';
-  process.env.ISLE_ELECTRON_STATIC = '1';
+  if (app.isPackaged) {
+    process.env.NODE_ENV = 'production';
+    process.env.ISLE_ELECTRON_STATIC = '1';
+  }
   process.env.ISLE_DIST_DIR = distDir;
 
   // 1. In-process bundled CommonJS server (Used in production Setup.exe and prebuilt server)

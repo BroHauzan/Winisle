@@ -2708,6 +2708,22 @@ export async function startServer(customPort?: number) {
         appType: 'spa',
       });
       app.use(vite.middlewares);
+      app.use('*', async (req, res, next) => {
+        if (req.path.startsWith('/api/')) return next();
+        try {
+          const rootIndex = path.resolve(process.cwd(), 'index.html');
+          if (fs.existsSync(rootIndex)) {
+            let template = fs.readFileSync(rootIndex, 'utf-8');
+            template = await vite.transformIndexHtml(req.originalUrl, template);
+            res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
+            return;
+          }
+        } catch (e: any) {
+          vite.ssrFixStacktrace?.(e);
+          return next(e);
+        }
+        next();
+      });
     } catch (viteErr) {
       console.warn('Vite dev server middleware unavailable, continuing without Vite:', viteErr);
     }
@@ -2720,6 +2736,8 @@ export async function startServer(customPort?: number) {
       path.resolve(process.cwd(), 'dist'),
       path.join(currentDir, 'dist'),
       path.join(currentDir, '..', 'dist'),
+      path.resolve(process.cwd()),
+      path.join(currentDir, '..'),
     ].filter(Boolean) as string[];
 
     const resolvedDistDir = candidateDistDirs.find((dir) => {
@@ -2781,8 +2799,26 @@ export async function startServer(customPort?: number) {
       if (serveStaticFile(indexPath, res)) {
         return;
       }
+      const rootIndex = path.join(currentDir, '..', 'index.html');
+      if (serveStaticFile(rootIndex, res)) {
+        return;
+      }
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.status(200).send('<!DOCTYPE html><html><body style="background:transparent;color:#fff;font-family:sans-serif;display:flex;justify-content:center;padding-top:10px;"><div style="background:#09090b;padding:8px 16px;border-radius:20px;font-size:12px;border:1px solid #27272a;">WinIsle Loading...</div></body></html>');
+      res.status(200).send(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="1">
+  <title>WinIsle</title>
+</head>
+<body style="background:transparent;color:#fff;font-family:system-ui,sans-serif;display:flex;justify-content:center;padding-top:10px;margin:0;">
+  <div style="background:#09090b;padding:8px 18px;border-radius:20px;font-size:12px;border:1px solid #27272a;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;align-items:center;gap:8px;">
+    <div style="width:7px;height:7px;border-radius:50%;background:#0a84ff;"></div>
+    <span>Memuat WinIsle...</span>
+  </div>
+  <script>setTimeout(() => window.location.reload(), 1200);</script>
+</body>
+</html>`);
     });
   }
 
