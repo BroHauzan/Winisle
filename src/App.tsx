@@ -347,11 +347,24 @@ declare global {
 }
 
 export default function App() {
-  // ── Clock & Status ──
+  // ── Clock & Status (Optimized: State only updates when minute rolls over, eliminating 59/60 idle re-renders) ──
   const [nowDate, setNowDate] = useState(() => new Date());
 
   useEffect(() => {
-    const t = setInterval(() => setNowDate(new Date()), 1000);
+    const checkMinute = () => {
+      const d = new Date();
+      setNowDate((prev) => {
+        if (
+          d.getMinutes() === prev.getMinutes() &&
+          d.getHours() === prev.getHours() &&
+          d.getDate() === prev.getDate()
+        ) {
+          return prev;
+        }
+        return d;
+      });
+    };
+    const t = setInterval(checkMinute, 1000);
     return () => clearInterval(t);
   }, []);
 
@@ -495,29 +508,32 @@ export default function App() {
     // Start with click-through enabled for transparent area, forwarding mousemove events
     setDesktopClickThrough(true);
 
+    let rafId = 0;
     const handleGlobalMouseMove = (e: MouseEvent) => {
-      const surface = document.getElementById('dynamic-island-surface');
-      if (!surface) {
-        setDesktopClickThrough(true);
-        return;
-      }
-      const rect = surface.getBoundingClientRect();
-      // Add a small 4px hit margin around the Dynamic Island pill for smooth hover entry/expansion
-      const insideBounds =
-        e.clientX >= rect.left - 4 &&
-        e.clientX <= rect.right + 4 &&
-        e.clientY >= Math.max(0, rect.top - 2) &&
-        e.clientY <= rect.bottom + 6;
+      if (rafId) return;
+      const clientX = e.clientX;
+      const clientY = e.clientY;
+      rafId = window.requestAnimationFrame(() => {
+        rafId = 0;
+        const surface = document.getElementById('dynamic-island-surface');
+        if (!surface) {
+          setDesktopClickThrough(true);
+          return;
+        }
+        const rect = surface.getBoundingClientRect();
+        const insideBounds =
+          clientX >= rect.left - 4 &&
+          clientX <= rect.right + 4 &&
+          clientY >= Math.max(0, rect.top - 2) &&
+          clientY <= rect.bottom + 6;
 
-      if (insideBounds) {
-        setDesktopClickThrough(false);
-      } else {
-        setDesktopClickThrough(true);
-      }
+        setDesktopClickThrough(!insideBounds);
+      });
     };
 
     window.addEventListener('mousemove', handleGlobalMouseMove, { passive: true });
     return () => {
+      if (rafId) window.cancelAnimationFrame(rafId);
       window.removeEventListener('mousemove', handleGlobalMouseMove);
     };
   }, [setDesktopClickThrough]);
@@ -680,6 +696,7 @@ export default function App() {
   // Real Windows / System Hardware Status Detection (Volume, Brightness, Battery Level & Charging)
   useEffect(() => {
     // 1. Poll system hardware status from backend OS probe (syncs Windows Master Volume when running on Windows)
+    let pollId = 0;
     const fetchOsHardware = () => {
       // Avoid overwriting right while user is actively scrolling volume/brightness
       if (Date.now() - lastLocalHardwareChangeRef.current < 2200) return;
@@ -688,18 +705,36 @@ export default function App() {
         .then((data) => {
           if (data && data.osHardwareAvailable) {
             osHardwareAvailableRef.current = true;
-            if (typeof data.batteryLevel === 'number') setBatteryLevel(data.batteryLevel);
-            if (typeof data.isCharging === 'boolean') setIsCharging(data.isCharging);
-            if (typeof data.volume === 'number') setVolume(data.volume);
-            if (typeof data.muted === 'boolean') setMuted(data.muted);
-            if (typeof data.brightness === 'number') setBrightness(data.brightness);
+            if (typeof data.batteryLevel === 'number') {
+              setBatteryLevel((prev) => (prev !== data.batteryLevel ? data.batteryLevel : prev));
+            }
+            if (typeof data.isCharging === 'boolean') {
+              setIsCharging((prev) => (prev !== data.isCharging ? data.isCharging : prev));
+            }
+            if (typeof data.volume === 'number') {
+              setVolume((prev) => (prev !== data.volume ? data.volume : prev));
+            }
+            if (typeof data.muted === 'boolean') {
+              setMuted((prev) => (prev !== data.muted ? data.muted : prev));
+            }
+            if (typeof data.brightness === 'number') {
+              setBrightness((prev) => (prev !== data.brightness ? data.brightness : prev));
+            }
           }
         })
         .catch(() => {});
     };
 
     fetchOsHardware();
-    const pollId = window.setInterval(fetchOsHardware, 4000);
+    // Dynamic polling rate: 4s when active, 12s when hidden/backgrounded to preserve CPU
+    const scheduleNextPoll = () => {
+      const interval = document.hidden ? 12000 : 4000;
+      pollId = window.setTimeout(() => {
+        fetchOsHardware();
+        scheduleNextPoll();
+      }, interval);
+    };
+    scheduleNextPoll();
 
     // Listen to native desktop wrapper hardware events (Electron / WebView2) if present
     const onNativeHardwareMsg = (ev: MessageEvent) => {
@@ -761,7 +796,7 @@ export default function App() {
     }
 
     return () => {
-      window.clearInterval(pollId);
+      window.clearTimeout(pollId);
       window.removeEventListener('message', onNativeHardwareMsg);
       if (batteryObj) {
         batteryObj.removeEventListener?.('levelchange', onLevelChange);
