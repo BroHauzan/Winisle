@@ -30,6 +30,7 @@ export interface IslandSurfaceProps {
   tintRgb?: [number, number, number];
   auraColors?: [number, number, number][];
   voiceLevel?: number;
+  voiceLevelRef?: React.RefObject<number | null>;
   nudgeTrigger?: number;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
@@ -52,6 +53,7 @@ export const IslandSurface: React.FC<IslandSurfaceProps> = ({
     [0.22, 0.84, 0.96],
   ],
   voiceLevel = 0,
+  voiceLevelRef,
   nudgeTrigger = 0,
   onMouseEnter,
   onMouseLeave,
@@ -60,6 +62,8 @@ export const IslandSurface: React.FC<IslandSurfaceProps> = ({
   children,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const voiceLevelRefInternal = useRef(voiceLevel);
+  voiceLevelRefInternal.current = voiceLevel;
   const [dims, setDims] = useState({ w: width, h: height, s: shoulder });
 
   const springsRef = useRef({
@@ -120,6 +124,11 @@ export const IslandSurface: React.FC<IslandSurfaceProps> = ({
     const startTime = lastTime;
 
     const tick = (now: number) => {
+      if (document.hidden) {
+        lastTime = now;
+        rafId = requestAnimationFrame(tick);
+        return;
+      }
       const dt = Math.min(0.04, Math.max(0.001, (now - lastTime) / 1000));
       lastTime = now;
       const sp = springsRef.current;
@@ -312,7 +321,8 @@ export const IslandSurface: React.FC<IslandSurfaceProps> = ({
             };
 
             // Soft animated gradient wash across the island interior
-            ctx.fillStyle = makeFlow(0.16 + voiceLevel * 0.1, 0);
+            const curVoiceLevel = voiceLevelRef?.current ?? voiceLevelRefInternal.current ?? 0;
+            ctx.fillStyle = makeFlow(0.16 + curVoiceLevel * 0.1, 0);
             ctx.fillRect(0, 0, outerW, outerH);
 
             // Soft bottom radial ambient glow
@@ -324,8 +334,8 @@ export const IslandSurface: React.FC<IslandSurfaceProps> = ({
               curH + 8,
               curW * 0.6
             );
-            bottomGlow.addColorStop(0, `rgba(155, 114, 251, ${0.22 + voiceLevel * 0.14})`);
-            bottomGlow.addColorStop(0.55, `rgba(66, 133, 244, ${0.1 + voiceLevel * 0.08})`);
+            bottomGlow.addColorStop(0, `rgba(155, 114, 251, ${0.22 + curVoiceLevel * 0.14})`);
+            bottomGlow.addColorStop(0.55, `rgba(66, 133, 244, ${0.1 + curVoiceLevel * 0.08})`);
             bottomGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
             ctx.fillStyle = bottomGlow;
             ctx.fillRect(0, 0, outerW, outerH);
@@ -350,7 +360,7 @@ export const IslandSurface: React.FC<IslandSurfaceProps> = ({
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [topInset, tintStyle, auraColors, voiceLevel]);
+  }, [topInset, tintStyle, auraColors, voiceLevelRef]);
 
   return (
     <div

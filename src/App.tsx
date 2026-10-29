@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BeatEqualizerBars } from './components/BeatEqualizerBars';
 import { BotCanvas } from './components/BotCanvas';
 import { IslandSurface } from './components/IslandSurface';
 import {
@@ -15,7 +16,6 @@ import {
   CloseCrossSvg,
   CoffeeCupSvg,
   EditPencilSvg,
-  EqualizerBarsSvg,
   FileDocumentBadgeSvg,
   ForwardSkipSvg,
   GearSettingsSvg,
@@ -1140,145 +1140,7 @@ export default function App() {
     }
   }, [lyricsMode, activeLineIndex]);
 
-  // ── Real-Time Beat-Reactive 4-Band Equalizer Visualizer (Web Audio FFT + Track Beat/Vocal Envelope) ──
-  const [audioBands, setAudioBands] = useState<[number, number, number, number]>([0.2, 0.2, 0.2, 0.2]);
-  const webAudioCtxRef = useRef<AudioContext | null>(null);
-  const webAudioAnalyserRef = useRef<AnalyserNode | null>(null);
-  const webAudioSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
-
-  useEffect(() => {
-    if (!isPlaying || !activeTrack || muted || volume === 0) {
-      setAudioBands([0.18, 0.18, 0.18, 0.18]);
-      return;
-    }
-
-    // Attempt to wire Web Audio API AnalyserNode when playing local/direct HTML5 <audio>
-    const audioEl = audioElRef.current;
-    if (audioEl && activeTrack.audioUrl && !webAudioAnalyserRef.current) {
-      try {
-        const Ctx = window.AudioContext || (window as any).webkitAudioContext;
-        if (Ctx) {
-          const ctx: AudioContext = webAudioCtxRef.current || new Ctx();
-          webAudioCtxRef.current = ctx;
-          if (ctx.state === 'suspended') {
-            ctx.resume().catch(() => {});
-          }
-          const analyser = ctx.createAnalyser();
-          analyser.fftSize = 64;
-          analyser.smoothingTimeConstant = 0.68;
-          if (!webAudioSourceRef.current) {
-            const src = ctx.createMediaElementSource(audioEl);
-            src.connect(analyser);
-            analyser.connect(ctx.destination);
-            webAudioSourceRef.current = src;
-          }
-          webAudioAnalyserRef.current = analyser;
-        }
-      } catch {
-        // Fallback to beat/vocal-envelope synthesis if CORS or MediaElementSource already bound
-      }
-    }
-
-    // Compute deterministic track tempo (BPM) from title + artist so beat pulses match the track's feel
-    const seedStr = `${activeTrack.title || ''}-${activeTrack.artist || ''}`;
-    let hash = 0;
-    for (let i = 0; i < seedStr.length; i++) {
-      hash = (hash * 31 + seedStr.charCodeAt(i)) | 0;
-    }
-    const trackBpm = 94 + (Math.abs(hash) % 44); // 94..137 BPM
-    const beatPeriodSec = 60 / trackBpm;
-
-    const fftData = new Uint8Array(32);
-    let rafId = 0;
-    let lastUpdate = 0;
-    const prevBands: [number, number, number, number] = [0.25, 0.35, 0.3, 0.22];
-
-    const tickEqualizer = (now: number) => {
-      if (now - lastUpdate >= 36) {
-        lastUpdate = now;
-        let b0 = 0;
-        let b1 = 0;
-        let b2 = 0;
-        let b3 = 0;
-        let usedRealFft = false;
-
-        if (webAudioAnalyserRef.current && activeTrack.audioUrl) {
-          try {
-            webAudioAnalyserRef.current.getByteFrequencyData(fftData);
-            const sum = fftData[0] + fftData[1] + fftData[2] + fftData[3] + fftData[4] + fftData[5];
-            if (sum > 8) {
-              usedRealFft = true;
-              b0 = Math.min(1, ((fftData[0] + fftData[1]) / 2 / 255) * 1.15);
-              b1 = Math.min(1, ((fftData[2] + fftData[3] + fftData[4]) / 3 / 255) * 1.25);
-              b2 = Math.min(1, ((fftData[5] + fftData[6] + fftData[7] + fftData[8]) / 4 / 255) * 1.35);
-              b3 = Math.min(1, ((fftData[9] + fftData[10] + fftData[11] + fftData[12]) / 4 / 255) * 1.45);
-            }
-          } catch {
-            // ignore
-          }
-        }
-
-        if (!usedRealFft) {
-          // Real-Time Beat & Vocal-Syllable Envelope Analyzer synced to positionMs & active lyrics
-          const posSec = (positionMsRef.current || now) / 1000;
-          const beatPhase = (posSec % beatPeriodSec) / beatPeriodSec;
-          const halfBeatPhase = ((posSec + beatPeriodSec * 0.5) % beatPeriodSec) / beatPeriodSec;
-          const sixteenthPhase = (posSec % (beatPeriodSec / 4)) / (beatPeriodSec / 4);
-
-          // Sharp kick transient at beat onset + sub-bass decay
-          const kickEnvelope = Math.pow(Math.max(0, 1 - beatPhase * 2.4), 1.8);
-          // Snare / backbeat & bassline groove on off-beats
-          const grooveEnvelope = Math.pow(Math.max(0, 1 - halfBeatPhase * 2.1), 1.6);
-          // Check if vocals are currently active in synced lyrics at current timestamp
-          let vocalEnergy = 0.45;
-          if (parsedLyrics.length > 0 && activeLineIndex >= 0) {
-            const activeLine = parsedLyrics[activeLineIndex];
-            const nextLine = parsedLyrics[activeLineIndex + 1];
-            const lineStart = activeLine?.timeMs ?? 0;
-            const lineEnd = nextLine ? nextLine.timeMs : lineStart + 4500;
-            if (positionMsRef.current >= lineStart && positionMsRef.current <= lineEnd) {
-              const syllableWave =
-                0.55 +
-                0.45 * Math.abs(Math.sin(posSec * 9.5 + (activeLineIndex % 5)) * Math.cos(posSec * 4.2));
-              vocalEnergy = activeLine.text.trim().length > 0 ? 0.35 + syllableWave * 0.65 : 0.25;
-            } else {
-              vocalEnergy = 0.28;
-            }
-          } else {
-            vocalEnergy = 0.42 + 0.45 * Math.abs(Math.sin(posSec * 6.8) * Math.cos(posSec * 3.1));
-          }
-
-          // Hi-hat / treble shimmer on 16th subdivisions
-          const hiHatShimmer =
-            0.3 +
-            0.55 * Math.pow(Math.max(0, 1 - sixteenthPhase * 1.9), 1.5) +
-            0.15 * Math.abs(Math.sin(posSec * 17.3));
-
-          b0 = Math.min(1, 0.22 + kickEnvelope * 0.68 + grooveEnvelope * 0.18);
-          b1 = Math.min(1, 0.26 + grooveEnvelope * 0.52 + kickEnvelope * 0.34);
-          b2 = Math.min(1, 0.2 + vocalEnergy * 0.78);
-          b3 = Math.min(1, 0.18 + hiHatShimmer * 0.72);
-        }
-
-        // Smooth attack / release interpolation so bars bounce fluidly without jitter
-        const nextBands: [number, number, number, number] = [
-          +(prevBands[0] * 0.32 + b0 * 0.68).toFixed(3),
-          +(prevBands[1] * 0.32 + b1 * 0.68).toFixed(3),
-          +(prevBands[2] * 0.32 + b2 * 0.68).toFixed(3),
-          +(prevBands[3] * 0.32 + b3 * 0.68).toFixed(3),
-        ];
-        prevBands[0] = nextBands[0];
-        prevBands[1] = nextBands[1];
-        prevBands[2] = nextBands[2];
-        prevBands[3] = nextBands[3];
-        setAudioBands(nextBands);
-      }
-      rafId = window.requestAnimationFrame(tickEqualizer);
-    };
-
-    rafId = window.requestAnimationFrame(tickEqualizer);
-    return () => window.cancelAnimationFrame(rafId);
-  }, [isPlaying, activeTrack, muted, volume, parsedLyrics, activeLineIndex]);
+  // ── Equalizer Visualizer is delegated to BeatEqualizerBars (Direct SVG DOM mutation with zero React re-renders) ──
 
   // Ensure active track always fetches synced lyrics from multi-provider chain if lrc is missing
   useEffect(() => {
@@ -2038,22 +1900,53 @@ export default function App() {
     }
   }, [volume, muted]);
 
-  // High-precision 60ms real-time playback & lyrics sync clock (works seamlessly for HTML5 Audio, FLAC, YouTube & OS Media)
+  // High-precision playback & lyrics sync clock with context-aware throttled React state updates
   useEffect(() => {
     if (!isPlaying || !activeTrack) return;
 
     let lastWallMs = performance.now();
+    let lastReactSync = 0;
+
     const interval = window.setInterval(() => {
       const nowWallMs = performance.now();
       const dtMs = Math.min(250, Math.max(0, Math.round(nowWallMs - lastWallMs)));
       lastWallMs = nowWallMs;
+
+      // When document is hidden (background / minimized), track position accurately via ref without UI renders
+      if (document.hidden) {
+        const dur =
+          activeTrack.durationMs && activeTrack.durationMs > 5000
+            ? activeTrack.durationMs
+            : 210000;
+        const nextVal = positionMsRef.current + dtMs;
+        if (nextVal >= dur) {
+          if (activeTrack.sourceType !== 'external') {
+            window.setTimeout(() => handleTrackEndedRef.current(), 0);
+          } else {
+            window.setTimeout(() => refreshExternalOsMedia(), 300);
+          }
+          positionMsRef.current = 0;
+        } else {
+          positionMsRef.current = nextVal;
+        }
+        return;
+      }
 
       // 1. If HTML5 <audio> is actively playing a local blob or HTTP FLAC stream, read its exact hardware currentTime
       const audioEl = audioElRef.current;
       if (audioEl && activeTrack.audioUrl && !audioEl.paused && audioEl.currentTime > 0) {
         const nextPos = Math.round(audioEl.currentTime * 1000);
         positionMsRef.current = nextPos;
-        setPositionMs(nextPos);
+
+        // Context-aware React state throttle:
+        // - lyricsMode: 80ms (karaoke word sync)
+        // - expanded: 250ms (fluid progress bar + clock)
+        // - collapsed notch: 1000ms (1 render/sec)
+        const syncThreshold = lyricsMode ? 80 : isExpanded ? 250 : 1000;
+        if (nowWallMs - lastReactSync >= syncThreshold) {
+          lastReactSync = nowWallMs;
+          setPositionMs(nextPos);
+        }
         return;
       }
 
@@ -2072,28 +1965,40 @@ export default function App() {
       }
 
       // 3. Advance positionMs smoothly using real wall-clock delta
-      setPositionMs((prev) => {
-        const dur =
-          activeTrack.durationMs && activeTrack.durationMs > 5000
-            ? activeTrack.durationMs
-            : 210000;
-        if (prev + dtMs >= dur) {
-          if (activeTrack.sourceType !== 'external') {
-            window.setTimeout(() => handleTrackEndedRef.current(), 0);
-          } else {
-            window.setTimeout(() => refreshExternalOsMedia(), 300);
-          }
-          positionMsRef.current = 0;
-          return 0;
+      const dur =
+        activeTrack.durationMs && activeTrack.durationMs > 5000
+          ? activeTrack.durationMs
+          : 210000;
+      const prev = positionMsRef.current;
+      if (prev + dtMs >= dur) {
+        if (activeTrack.sourceType !== 'external') {
+          window.setTimeout(() => handleTrackEndedRef.current(), 0);
+        } else {
+          window.setTimeout(() => refreshExternalOsMedia(), 300);
         }
-        const nextVal = prev + dtMs;
-        positionMsRef.current = nextVal;
-        return nextVal;
-      });
+        positionMsRef.current = 0;
+        setPositionMs(0);
+        return;
+      }
+      const nextVal = prev + dtMs;
+      positionMsRef.current = nextVal;
+
+      const syncThreshold = lyricsMode ? 80 : isExpanded ? 250 : 1000;
+      if (nowWallMs - lastReactSync >= syncThreshold) {
+        lastReactSync = nowWallMs;
+        setPositionMs(nextVal);
+      }
     }, 60);
 
     return () => window.clearInterval(interval);
-  }, [isPlaying, activeTrack, refreshExternalOsMedia]);
+  }, [isPlaying, activeTrack, refreshExternalOsMedia, isExpanded, lyricsMode]);
+
+  // Immediate sync when opening/expanding Island so progress & lyrics are accurate on the exact frame
+  useEffect(() => {
+    if (isExpanded && isPlaying) {
+      setPositionMs(positionMsRef.current);
+    }
+  }, [isExpanded, isPlaying]);
 
   const formatTrackTime = (ms: number, remaining = false) => {
     const sec = Math.max(0, Math.floor(ms / 1000));
@@ -2192,9 +2097,13 @@ export default function App() {
 
   useEffect(() => {
     if (!pomoRunning) return;
+    let lastSec = Math.floor(Date.now() / 1000);
     const t = setInterval(() => {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const elapsed = Math.max(1, nowSec - lastSec);
+      lastSec = nowSec;
       setPomoRemainingSeconds((prev) => {
-        if (prev <= 1) {
+        if (prev <= elapsed) {
           setPomoRunning(false);
           if (pomoMode === 'focus') {
             setPomoSessionsCompleted((s) => s + 1);
@@ -2204,7 +2113,7 @@ export default function App() {
           }
           return 0;
         }
-        return prev - 1;
+        return prev - elapsed;
       });
     }, 1000);
     return () => clearInterval(t);
@@ -2800,7 +2709,7 @@ export default function App() {
   // ── Voice Assistant (gemini-3.8-live Live API) & Multimodal AI Conversation (gemini-3.8-flash + Vision + Google Search) ──
   const [voiceListening, setVoiceListening] = useState(false);
   const [liveConnected, setLiveConnected] = useState(false);
-  const [voiceEnergy, setVoiceEnergy] = useState(0);
+  const voiceEnergyRef = useRef<number>(0);
   const [voiceLang, setVoiceLang] = useState<'id-ID' | 'en-US'>('id-ID');
   const [voiceStatusHint, setVoiceStatusHint] = useState<string | null>(null);
   const [assistantLoading, setAssistantLoading] = useState(false);
@@ -2856,7 +2765,7 @@ export default function App() {
     return null;
   }, [messages]);
 
-  // Smooth Typewriter / Streaming Text Reveal Effect when AI answers
+  // Smooth Typewriter / Streaming Text Reveal Effect when AI answers (Throttled to ~20fps to prevent CPU spikes)
   useEffect(() => {
     if (!animatingMsgId || !latestAssistantMessage || latestAssistantMessage.id !== animatingMsgId) {
       return;
@@ -2866,10 +2775,10 @@ export default function App() {
       setAnimatingMsgId(null);
       return;
     }
-    const step = Math.max(3, Math.ceil(fullLen / 38));
+    const step = Math.max(6, Math.ceil(fullLen / 22));
     const timer = window.setTimeout(() => {
       setRevealedChars((c) => Math.min(fullLen, c + step));
-    }, 16);
+    }, 48);
     return () => window.clearTimeout(timer);
   }, [animatingMsgId, latestAssistantMessage, revealedChars]);
 
@@ -2963,12 +2872,13 @@ export default function App() {
   // Animate voice energy fallback while loading (if real PCM audio stream isn't driving it)
   useEffect(() => {
     if (!voiceListening && !assistantLoading) {
-      setVoiceEnergy(0);
+      voiceEnergyRef.current = 0;
       return;
     }
     const id = setInterval(() => {
+      if (document.hidden) return;
       if (!micStreamRef.current) {
-        setVoiceEnergy(0.25 + Math.random() * 0.55);
+        voiceEnergyRef.current = 0.25 + Math.random() * 0.55;
       }
     }, 110);
     return () => clearInterval(id);
@@ -3609,7 +3519,7 @@ export default function App() {
                   sum += Math.abs(float32[i]);
                 }
                 const avg = sum / (float32.length / 8);
-                setVoiceEnergy(Math.min(1, Math.max(0.25, avg * 4.5)));
+                voiceEnergyRef.current = Math.min(1, Math.max(0.25, avg * 4.5));
 
                 const audioBuffer = outCtx.createBuffer(1, float32.length, 24000);
                 audioBuffer.getChannelData(0).set(float32);
@@ -3718,7 +3628,7 @@ export default function App() {
                 sum += inputData[i] * inputData[i];
               }
               const rms = Math.sqrt(sum / (inputData.length / 4));
-              setVoiceEnergy(Math.min(1, Math.max(0.12, rms * 6.5)));
+              voiceEnergyRef.current = Math.min(1, Math.max(0.12, rms * 6.5));
 
               if (liveWsRef.current && liveWsRef.current.readyState === WebSocket.OPEN) {
                 const base64Pcm = float32ToPcm16Base64(inputData);
@@ -4361,10 +4271,16 @@ export default function App() {
                     title={isPlaying ? 'Pause music' : 'Play music'}
                     className="text-white/95 hover:text-white transition"
                   >
-                    <EqualizerBarsSvg
+                    <BeatEqualizerBars
                       size={14}
                       playing={isPlaying && !muted && volume > 0}
-                      bands={audioBands}
+                      activeTrackTitle={activeTrack?.title}
+                      activeTrackArtist={activeTrack?.artist}
+                      hasAudioUrl={Boolean(activeTrack?.audioUrl)}
+                      audioEl={audioElRef.current}
+                      positionMsRef={positionMsRef}
+                      parsedLyricsCount={parsedLyrics.length}
+                      activeLineIndex={activeLineIndex}
                     />
                   </button>
                 )}
@@ -5625,7 +5541,7 @@ export default function App() {
           tintStyle={tintStyle}
           tintRgb={tintRgb}
           auraColors={botPalette.glow}
-          voiceLevel={voiceEnergy}
+          voiceLevelRef={voiceEnergyRef}
           nudgeTrigger={nudgeCount}
           onMouseEnter={() => {
             setDesktopClickThrough(false);
@@ -6099,7 +6015,7 @@ export default function App() {
                       shape={botShape}
                       color={botColor}
                       form={voiceListening ? 'listening' : assistantLoading ? 'thinking' : botForm}
-                      voiceLevel={voiceEnergy}
+                      voiceLevelRef={voiceEnergyRef}
                     />
                   </div>
 
@@ -6305,7 +6221,7 @@ export default function App() {
                             shape={botShape}
                             color={botColor}
                             form="thinking"
-                            voiceLevel={voiceEnergy}
+                            voiceLevelRef={voiceEnergyRef}
                           />
                         </div>
                         <GeminiThinkingIndicator
@@ -6529,7 +6445,7 @@ export default function App() {
                         shape={botShape}
                         color={botColor}
                         form={voiceListening ? 'listening' : assistantLoading ? 'thinking' : botForm}
-                        voiceLevel={voiceEnergy}
+                        voiceLevelRef={voiceEnergyRef}
                       />
                     </div>
 
@@ -6680,7 +6596,17 @@ export default function App() {
                       title={isPlaying ? 'Pause music' : 'Play music'}
                       className="text-white/80 hover:text-white transition"
                     >
-                      <EqualizerBarsSvg size={14} playing={isPlaying} />
+                      <BeatEqualizerBars
+                        size={14}
+                        playing={isPlaying && !muted && volume > 0}
+                        activeTrackTitle={activeTrack?.title}
+                        activeTrackArtist={activeTrack?.artist}
+                        hasAudioUrl={Boolean(activeTrack?.audioUrl)}
+                        audioEl={audioElRef.current}
+                        positionMsRef={positionMsRef}
+                        parsedLyricsCount={parsedLyrics.length}
+                        activeLineIndex={activeLineIndex}
+                      />
                     </button>
 
                     <button

@@ -8,6 +8,7 @@ interface BotCanvasProps {
   glowMode?: 'match' | 'classic';
   form?: BotForm;
   voiceLevel?: number;
+  voiceLevelRef?: React.RefObject<number | null>;
   gestureTrigger?: { type: 'nod' | 'shake' | 'hop'; id: number } | null;
   className?: string;
 }
@@ -19,6 +20,7 @@ export const BotCanvas: React.FC<BotCanvasProps> = ({
   glowMode = 'match',
   form = 'listening',
   voiceLevel = 0,
+  voiceLevelRef,
   gestureTrigger = null,
   className = '',
 }) => {
@@ -69,6 +71,10 @@ export const BotCanvas: React.FC<BotCanvasProps> = ({
     const start = performance.now();
 
     const render = (now: number) => {
+      if (document.hidden) {
+        rafId = requestAnimationFrame(render);
+        return;
+      }
       const canvas = canvasRef.current;
       const bot = botRef.current;
       if (canvas && bot) {
@@ -84,7 +90,8 @@ export const BotCanvas: React.FC<BotCanvasProps> = ({
           ctx.clearRect(0, 0, targetW, targetW);
           ctx.scale(dpr, dpr);
           const elapsed = (now - start) / 1000;
-          bot.step(elapsed, pointerRef.current, levelRef.current);
+          const currentLevel = voiceLevelRef?.current ?? levelRef.current;
+          bot.step(elapsed, pointerRef.current, currentLevel);
           bot.paint(ctx, size);
           ctx.restore();
         }
