@@ -1,0 +1,6 @@
+{
+  "summary":  "Rencana pembaruan UI & animasi Music Player sesuai video referensi, penghapusan pencarian klik cover dengan petunjuk minimalis Alt + Q, penghapusan border bergerak saat AI berpikir, ukuran Dynamic Island seragam di semua menu tanpa UI terpotong di Calendar & Notification, peredupan glow lirik, serta fitur opsional FLAC Lossless di Settings dan indikator player.",
+  "updatedAt":  "2026-10-28T21:01:49.408331276Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

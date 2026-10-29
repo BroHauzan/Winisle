@@ -1,3593 +1,6991 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Bell,
-  BellOff,
-  Bluetooth,
-  Calendar as CalendarIcon,
-  Check,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ChevronUp,
-  Clipboard,
-  Clock,
-  Copy,
-  CornerDownLeft,
-  Cpu,
-  ExternalLink,
-  FileText,
-  FolderOpen,
-  Gauge,
-  Globe,
-  Headphones,
-  Image as ImageIcon,
-  Keyboard,
-  Link2,
-  ListTodo,
-  Lock,
-  MessageSquareQuote,
-  Mic,
-  MicOff,
-  Minus,
-  Monitor,
-  Moon,
-  Music,
-  Pause,
-  Phone,
-  Pin,
-  Play,
-  Plus,
-  RotateCcw,
-  Search,
-  Send,
-  Settings,
-  ShieldAlert,
-  SkipBack,
-  SkipForward,
-  Sparkles,
-  Speaker,
-  Square,
-  Sun,
-  Terminal,
-  Timer,
-  Trash2,
-  Upload,
-  Video,
-  Volume2,
-  VolumeX,
-  Wifi,
-  WifiOff,
-  X,
-  Zap,
-} from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BotCanvas } from './components/BotCanvas';
 import { IslandSurface } from './components/IslandSurface';
 import {
-  BotColorName,
-  BotForm,
-  BotShapeName,
-  COLORS,
-  paletteFor,
-  SHAPES,
-} from './core/bot';
-import { CalendarEvent, parseEventLine } from './core/calendar';
+  AlarmBellSvg,
+  BackwardSkipSvg,
+  BellOutlineSvg,
+  BoltChargingSvg,
+  CalendarGridSvg,
+  CapsLockArrowSvg,
+  CheckTickSvg,
+  ChevronDownSvg,
+  ChevronLeftSvg,
+  ChevronRightSvg,
+  CloseCrossSvg,
+  CoffeeCupSvg,
+  EditPencilSvg,
+  EqualizerBarsSvg,
+  FileDocumentBadgeSvg,
+  ForwardSkipSvg,
+  GearSettingsSvg,
+  GlobeTimezoneSvg,
+  KeyboardSymbolicSvg,
+  LyricsQuoteBubbleSvg,
+  MailEnvelopeSvg,
+  MessageBubbleSvg,
+  MicSymbolicSvg,
+  MoonFilledSvg,
+  MusicNoteSvg,
+  PauseFilledSvg,
+  PlayFilledSvg,
+  PlusSvg,
+  RotateResetSvg,
+  SendArrowSvg,
+  ShelfTraySvg,
+  SparkleFourPointSvg,
+  SpeakerWaveSvg,
+  StopSquareSvg,
+  SunBrightnessSvg,
+  TargetFocusSvg,
+  TaskCheckBoxSvg,
+  TimerStopwatchSvg,
+  VideoCameraSvg,
+} from './components/IsleIcons';
+import { BotColorName, BotForm, BotShapeName, paletteFor } from './core/bot';
 import { parseLrc, SAMPLE_TRACKS } from './core/lrc';
-import {
-  DEFAULT_POMODORO_CONFIG,
-  formatTimerMs,
-  Phase,
-  phaseLabel,
-} from './core/pomodoro';
 
-type PageId =
-  | 'call'
-  | 'music'
-  | 'notifications'
-  | 'focus'
-  | 'reminders'
-  | 'shelf'
-  | 'calendar'
-  | 'usage';
+type IslandPage = 'music' | 'notifications' | 'pomodoro' | 'todolist' | 'shelf' | 'calendar';
 
-interface ReminderItem {
+const ISLAND_PAGES: { id: IslandPage; label: string }[] = [
+  { id: 'music', label: 'Music' },
+  { id: 'notifications', label: 'Notifications' },
+  { id: 'pomodoro', label: 'Focus' },
+  { id: 'todolist', label: 'Tasks' },
+  { id: 'shelf', label: 'Shelf' },
+  { id: 'calendar', label: 'Calendar' },
+];
+
+interface ToDoItem {
   id: number;
   title: string;
-  doneAt?: number;
+  time?: string;
+  done: boolean;
 }
 
-interface ClipItem {
-  id: number;
-  kind: 'text' | 'code' | 'link' | 'image' | 'file';
-  content: string;
-  subtitle?: string;
-  app: string;
-  age: string;
-  pinned: boolean;
-  gradient?: string;
-}
+export type ShelfFileExt = 'pdf' | 'docx' | 'msi' | 'img' | 'other';
 
-interface ShelfFileItem {
+interface ShelfFile {
   id: number;
   name: string;
-  kind: 'image' | 'pdf' | 'code' | 'archive';
   size: string;
-  accentRgb: [number, number, number];
-  previewGradient?: string;
+  ext: ShelfFileExt;
+}
+
+const SAMPLE_DRAGGABLE_FILES: { name: string; size: string; ext: ShelfFileExt }[] = [
+  {
+    name: 'Katalis+pendidikan+vol+2+no+2+juni+2025.pdf',
+    size: '1.0 MB',
+    ext: 'pdf',
+  },
+  {
+    name: 'JUKNIS_TOURNAMENT_FREE_FIRE_BR.docx',
+    size: '28 KB',
+    ext: 'docx',
+  },
+  {
+    name: 'LastFM_Scrobbler_3.1.29.msi',
+    size: '1.3 MB',
+    ext: 'msi',
+  },
+];
+
+function detectFileExt(filename: string): ShelfFileExt {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith('.pdf')) return 'pdf';
+  if (lower.endsWith('.doc') || lower.endsWith('.docx') || lower.endsWith('.rtf')) return 'docx';
+  if (
+    lower.endsWith('.msi') ||
+    lower.endsWith('.exe') ||
+    lower.endsWith('.zip') ||
+    lower.endsWith('.rar')
+  )
+    return 'msi';
+  if (
+    lower.endsWith('.png') ||
+    lower.endsWith('.jpg') ||
+    lower.endsWith('.jpeg') ||
+    lower.endsWith('.webp') ||
+    lower.endsWith('.svg')
+  )
+    return 'img';
+  return 'other';
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '24 KB';
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function truncateMiddleFileName(name: string, maxChars = 11): string {
+  if (name.length <= maxChars) return name;
+  return `${name.slice(0, maxChars - 2)}..`;
 }
 
 interface NotificationItem {
   id: number;
-  app: string;
+  iconType: 'calendar' | 'download' | 'message';
   title: string;
-  body: string;
-  time: string;
-  seen: boolean;
-  actions: string[];
+  subtitle: string;
+  timeAgo: string;
+  unread: boolean;
 }
 
-interface PeekAlert {
-  id: string;
-  kind:
-    | 'charging'
-    | 'low-battery'
-    | 'volume'
-    | 'brightness'
-    | 'capslock'
-    | 'earbuds'
-    | 'meeting'
-    | 'agent-ask'
-    | 'assistant-done';
-  title: string;
-  subtitle?: string;
-  valueText?: string;
-  level?: number;
-  accentColor: string;
-  codeLine?: string;
-  project?: string;
-  agentName?: 'Claude Code' | 'Codex';
-  meetingUrl?: string;
-  answeredState?: 'allowed' | 'always' | 'denied';
-}
-
-interface ChatTurn {
+interface CalendarEventItem {
   id: number;
-  userText: string;
-  steps: string[];
-  commandCard?: {
-    purpose: string;
-    command: string;
-    riskLabel: string;
-    riskLevel: 'amber' | 'red';
-    status: 'pending' | 'running' | 'done' | 'denied';
-    durationText?: string;
-    logs?: string[];
+  title: string;
+  time: string;
+  color: string;
+}
+
+type SystemAlertType =
+  | 'volume'
+  | 'mute'
+  | 'brightness'
+  | 'capslock'
+  | 'charging'
+  | 'lowbattery'
+  | 'meeting'
+  | 'permission'
+  | 'notification'
+  | 'alarm';
+
+export interface SmartAlarm {
+  id: string;
+  time: string; // "HH:mm" (24-hour format)
+  title: string;
+  enabled: boolean;
+  createdAt: number;
+}
+
+interface ActiveAlert {
+  id: number;
+  type: SystemAlertType;
+  value?: number;
+  muted?: boolean;
+  capsOn?: boolean;
+  permissionState?: 'pending' | 'allowed' | 'denied';
+  alarmId?: string;
+  alarmTitle?: string;
+  alarmTime?: string;
+}
+
+interface SearchSourceItem {
+  title: string;
+  uri: string;
+}
+
+interface FoundFileItem {
+  name: string;
+  path: string;
+  size: string;
+  ext: string;
+}
+
+interface CommandCardData {
+  purpose: string;
+  command: string;
+  output?: string;
+  uri?: string;
+  riskLabel?: string;
+  riskLevel?: 'amber' | 'green';
+}
+
+interface RealMediaTrack {
+  title: string;
+  artist: string;
+  coverUrl?: string;
+  audioUrl?: string;
+  isFlac?: boolean;
+  durationMs: number;
+  lrc: string;
+  syncType?: 'WORD' | 'LINE';
+  provider?: string;
+  wordsByLine?: any[];
+  lrclibId?: number;
+  youtubeVideoId?: string;
+  youtubeMusicUrl?: string;
+  spotifyUrl?: string;
+  sourceType?: 'internal' | 'external';
+  externalApp?: string;
+  tintRgb: [number, number, number];
+}
+
+interface PendingImageAttachment {
+  dataUrl: string;
+  base64: string;
+  mimeType: string;
+  name: string;
+}
+
+interface ChatMessage {
+  id: number;
+  role: 'user' | 'assistant' | 'command';
+  text: string;
+  imageUrl?: string;
+  command?: string;
+  commandStatus?: 'running' | 'done' | 'denied';
+  timestamp?: string;
+  searchSources?: SearchSourceItem[];
+  commandCard?: CommandCardData;
+  foundFiles?: FoundFileItem[];
+}
+
+interface GeminiAssistantResponse {
+  reply: string;
+  activeStepHeadline?: string;
+  agentSteps?: string[];
+  action?: string;
+  actionParam?: string;
+  searchSources?: SearchSourceItem[];
+  commandCard?: CommandCardData;
+  foundFiles?: FoundFileItem[];
+  trackData?: {
+    title: string;
+    artist: string;
+    coverUrl?: string;
+    audioUrl?: string;
+    isFlac?: boolean;
+    durationMs?: number;
+    youtubeVideoId?: string;
+    youtubeMusicUrl?: string;
+    spotifyUrl?: string;
+    lrc?: string;
+    syncType?: 'WORD' | 'LINE';
+    provider?: string;
+    wordsByLine?: any[];
+    lrclibId?: number;
   };
-  replyText: string;
-  timestamp: string;
+  source?: string;
+  error?: string;
+  code?: string;
+}
+
+// Convert Float32 microphone samples (-1..1) at 16kHz into Base64-encoded 16-bit little-endian PCM for gemini-3.8-live
+function float32ToPcm16Base64(float32: Float32Array): string {
+  const int16 = new Int16Array(float32.length);
+  for (let i = 0; i < float32.length; i++) {
+    const s = Math.max(-1, Math.min(1, float32[i]));
+    int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  const bytes = new Uint8Array(int16.buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return window.btoa(binary);
+}
+
+// Convert Base64-encoded 16-bit little-endian PCM (24kHz) from gemini-3.8-live into Float32Array for Web Audio playback
+function pcm16Base64ToFloat32(base64: string): Float32Array {
+  const binary = window.atob(base64);
+  const byteLength = binary.length - (binary.length % 2);
+  const bytes = new Uint8Array(byteLength);
+  for (let i = 0; i < byteLength; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const int16 = new Int16Array(bytes.buffer);
+  const float32 = new Float32Array(int16.length);
+  for (let i = 0; i < int16.length; i++) {
+    float32[i] = int16[i] / 32768.0;
+  }
+  return float32;
+}
+
+const MONTH_NAMES = [
+  'JANUARY',
+  'FEBRUARY',
+  'MARCH',
+  'APRIL',
+  'MAY',
+  'JUNE',
+  'JULY',
+  'AUGUST',
+  'SEPTEMBER',
+  'OCTOBER',
+  'NOVEMBER',
+  'DECEMBER',
+];
+
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Reusable Gemini-Style "Thinking" Animated Dots Component
+const GeminiThinkingIndicator: React.FC<{ label?: string }> = ({ label = 'Thinking' }) => (
+  <div className="inline-flex items-center gap-2 py-0.5">
+    <span className="text-[12px] font-semibold gemini-thinking-shimmer tracking-tight">
+      {label}
+    </span>
+    <span className="inline-flex items-center gap-1 pt-0.5">
+      <span
+        className="w-1.5 h-1.5 rounded-full bg-[#a5b4fc]"
+        style={{ animation: 'geminiDotBounce 1.2s infinite ease-in-out 0ms' }}
+      />
+      <span
+        className="w-1.5 h-1.5 rounded-full bg-[#60a5fa]"
+        style={{ animation: 'geminiDotBounce 1.2s infinite ease-in-out 160ms' }}
+      />
+      <span
+        className="w-1.5 h-1.5 rounded-full bg-[#38bdf8]"
+        style={{ animation: 'geminiDotBounce 1.2s infinite ease-in-out 320ms' }}
+      />
+    </span>
+  </div>
+);
+
+declare global {
+  interface Window {
+    electronAPI?: {
+      isElectron?: boolean;
+      setIgnoreMouseEvents?: (ignore: boolean, options?: { forward?: boolean }) => void;
+      onToggleAssistant?: (callback: () => void) => () => void;
+    };
+  }
 }
 
 export default function App() {
-  // ── Clock & Top Bar State ──
+  // ── Clock & Status ──
   const [nowDate, setNowDate] = useState(() => new Date());
-  const [use24Hour, setUse24Hour] = useState(true);
-  const [barOpacity, setBarOpacity] = useState(0.18); // 0 = glass, 1 = solid black
-  const [hangingCompact, setHangingCompact] = useState(false);
-  const [openOnHover, setOpenOnHover] = useState(true);
 
   useEffect(() => {
-    const id = setInterval(() => setNowDate(new Date()), 1000);
-    return () => clearInterval(id);
+    const t = setInterval(() => setNowDate(new Date()), 1000);
+    return () => clearInterval(t);
   }, []);
 
-  // ── Island Presentation State ──
-  // 'compact' | 'peek' | 'voice' | 'expanded'
-  const [isHovered, setIsHovered] = useState(false);
-  const [pinnedOpen, setPinnedOpen] = useState(false);
-  const [voiceOpen, setVoiceOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activePage, setActivePage] = useState<PageId>('music');
-  const [nudgeCount, setNudgeCount] = useState(0);
-  const hoverTimerRef = useRef<number | null>(null);
-  const leaveTimerRef = useRef<number | null>(null);
+  const headerDateStr = useMemo(() => {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const d = days[nowDate.getDay()];
+    const date = String(nowDate.getDate()).padStart(2, '0');
+    const m = SHORT_MONTHS[nowDate.getMonth()];
+    return `${d} ${date} ${m}`;
+  }, [nowDate]);
 
-  // ── Live Activities & Privacy State ──
-  const [dnd, setDnd] = useState(false);
-  const [callActive, setCallActive] = useState(false);
-  const [callMuted, setCallMuted] = useState(false);
-  const [callSeconds, setCallSeconds] = useState(75);
-  const [callService, setCallService] = useState<'Google Meet' | 'WhatsApp'>('Google Meet');
-  const [screenRecording, setScreenRecording] = useState(false);
-  const [recordSeconds, setRecordSeconds] = useState(0);
-  const [privacyDots, setPrivacyDots] = useState({
-    camera: false,
-    microphone: false,
-    screenShare: false,
+  const timeStr = useMemo(() => {
+    const hh = String(nowDate.getHours()).padStart(2, '0');
+    const mm = String(nowDate.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  }, [nowDate]);
+
+  const fullHeaderDateStr = useMemo(() => {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const d = days[nowDate.getDay()];
+    const date = String(nowDate.getDate());
+    const m = SHORT_MONTHS[nowDate.getMonth()];
+    const y = nowDate.getFullYear();
+    const hh = String(nowDate.getHours()).padStart(2, '0');
+    const mm = String(nowDate.getMinutes()).padStart(2, '0');
+    return `${d} ${date} ${m} ${y} ${hh}:${mm}`;
+  }, [nowDate]);
+
+  const worldClocks = useMemo(() => {
+    const fmt = (offsetHours: number) => {
+      const utc = nowDate.getTime() + nowDate.getTimezoneOffset() * 60000;
+      const target = new Date(utc + offsetHours * 3600000);
+      return `${String(target.getHours()).padStart(2, '0')}:${String(target.getMinutes()).padStart(2, '0')}`;
+    };
+    return [
+      { city: 'New York', time: fmt(-4) },
+      { city: 'London', time: fmt(1) },
+      { city: 'Tokyo', time: fmt(9) },
+    ];
+  }, [nowDate]);
+
+  // ── Persistent Active Page State (Remembers Pomodoro / Calendar / Shelf when closed & reopened) ──
+  // Default to Music Player (pageIndex 0) on startup per user request
+  const [pageIndex, setPageIndex] = useState<number>(0);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('isle_active_page_index', String(pageIndex));
+    } catch {
+      // ignore storage errors
+    }
+  }, [pageIndex]);
+
+  // ── Dual-Layer Simultaneous Carousel Slide State (Matches video 00:01-00:04) ──
+  const [prevPageIndex, setPrevPageIndex] = useState<number | null>(null);
+  const [slideDir, setSlideDir] = useState<'left' | 'right'>('right');
+  const [slideTick, setSlideTick] = useState(0);
+  const pageTransTimerRef = useRef<number | null>(null);
+
+  const navigateToPage = useCallback(
+    (nextIdx: number, explicitDir?: 'left' | 'right') => {
+      const normalized = ((nextIdx % ISLAND_PAGES.length) + ISLAND_PAGES.length) % ISLAND_PAGES.length;
+      setPageIndex((currIdx) => {
+        if (normalized === currIdx) return currIdx;
+        const dir: 'left' | 'right' =
+          explicitDir ?? (normalized > currIdx ? 'right' : 'left');
+        setSlideDir(dir);
+        setPrevPageIndex(currIdx);
+        setSlideTick((t) => t + 1);
+
+        if (pageTransTimerRef.current) {
+          window.clearTimeout(pageTransTimerRef.current);
+        }
+        pageTransTimerRef.current = window.setTimeout(() => {
+          setPrevPageIndex(null);
+          pageTransTimerRef.current = null;
+        }, 280);
+
+        return normalized;
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    return () => {
+      if (pageTransTimerRef.current) {
+        window.clearTimeout(pageTransTimerRef.current);
+      }
+    };
+  }, []);
+
+  // ── Alt+Q Default Mode Preference ('conversation' = Auto-Focus Typing, 'voice-pill' = Voice Agent) ──
+  const [defaultAltQMode, setDefaultAltQMode] = useState<'conversation' | 'voice-pill'>(() => {
+    try {
+      const saved = window.localStorage.getItem('isle_altq_mode');
+      if (saved === 'voice-pill' || saved === 'conversation') return saved;
+    } catch {
+      // ignore
+    }
+    return 'conversation';
   });
 
   useEffect(() => {
-    if (!callActive) return;
-    const id = setInterval(() => setCallSeconds((s) => s + 1), 1000);
-    return () => clearInterval(id);
-  }, [callActive]);
-
-  useEffect(() => {
-    if (!screenRecording) {
-      setRecordSeconds(0);
-      return;
+    try {
+      window.localStorage.setItem('isle_altq_mode', defaultAltQMode);
+    } catch {
+      // ignore
     }
-    const id = setInterval(() => setRecordSeconds((s) => s + 1), 1000);
-    return () => clearInterval(id);
-  }, [screenRecording]);
+  }, [defaultAltQMode]);
 
-  // ── Music & Synced Lyrics State ──
-  const [trackIndex, setTrackIndex] = useState(0);
-  const currentTrack = SAMPLE_TRACKS[trackIndex];
-  const [isPlaying, setIsPlaying] = useState(true);
-  const [trackPosMs, setTrackPosMs] = useState(8200);
-  const [lyricsMode, setLyricsMode] = useState(false);
-  const [audioOutputMode, setAudioOutputMode] = useState(false);
-  const [volume, setVolume] = useState(74);
-  const [selectedOutput, setSelectedOutput] = useState<'speakers' | 'airbuds' | 'hdmi'>('airbuds');
+  // ── Island Presentation State (starts collapsed as a compact notch) ──
+  const [isHovered, setIsHovered] = useState(false);
+  const [isPinnedOpen, setIsPinnedOpen] = useState(false);
+  const [dragAutoOpened, setDragAutoOpened] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantMode, setAssistantMode] = useState<'voice-pill' | 'conversation'>(defaultAltQMode);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [nudgeCount, setNudgeCount] = useState(0);
 
-  const parsedLyrics = useMemo(() => parseLrc(currentTrack.lrc), [currentTrack]);
+  // Input ref for immediate auto-focus when opening Assistant in Type mode (Alt+Q)
+  const assistantInputRef = useRef<HTMLInputElement | null>(null);
+
+  // ── Electron Frameless Overlay Click-Through Controller ──
+  // Tracks whether transparent area outside the Dynamic Island should ignore mouse events
+  const clickThroughStateRef = useRef<boolean | null>(null);
+  const setDesktopClickThrough = useCallback((ignore: boolean) => {
+    if (typeof window === 'undefined' || !window.electronAPI?.setIgnoreMouseEvents) return;
+    if (clickThroughStateRef.current === ignore) return;
+    clickThroughStateRef.current = ignore;
+    if (ignore) {
+      window.electronAPI.setIgnoreMouseEvents(true, { forward: true });
+    } else {
+      window.electronAPI.setIgnoreMouseEvents(false);
+    }
+  }, []);
 
   useEffect(() => {
-    if (!isPlaying) return;
-    const id = setInterval(() => {
-      setTrackPosMs((prev) => {
-        if (prev + 250 >= currentTrack.durationMs) {
-          return 0;
-        }
-        return prev + 250;
-      });
-    }, 250);
-    return () => clearInterval(id);
-  }, [isPlaying, currentTrack.durationMs]);
+    if (typeof window === 'undefined' || !window.electronAPI?.setIgnoreMouseEvents) return;
 
-  const activeLyricIndex = useMemo(() => {
-    let idx = 0;
+    // Start with click-through enabled for transparent area, forwarding mousemove events
+    setDesktopClickThrough(true);
+
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      const surface = document.getElementById('dynamic-island-surface');
+      if (!surface) {
+        setDesktopClickThrough(true);
+        return;
+      }
+      const rect = surface.getBoundingClientRect();
+      // Add a small 4px hit margin around the Dynamic Island pill for smooth hover entry/expansion
+      const insideBounds =
+        e.clientX >= rect.left - 4 &&
+        e.clientX <= rect.right + 4 &&
+        e.clientY >= Math.max(0, rect.top - 2) &&
+        e.clientY <= rect.bottom + 6;
+
+      if (insideBounds) {
+        setDesktopClickThrough(false);
+      } else {
+        setDesktopClickThrough(true);
+      }
+    };
+
+    window.addEventListener('mousemove', handleGlobalMouseMove, { passive: true });
+    return () => {
+      window.removeEventListener('mousemove', handleGlobalMouseMove);
+    };
+  }, [setDesktopClickThrough]);
+
+  useEffect(() => {
+    if (assistantOpen && assistantMode === 'conversation') {
+      setDesktopClickThrough(false);
+      const timer = window.setTimeout(() => {
+        assistantInputRef.current?.focus();
+      }, 40);
+      return () => window.clearTimeout(timer);
+    }
+  }, [assistantOpen, assistantMode, setDesktopClickThrough]);
+
+  // ── Real Laptop Battery Status API + Manual Test Override ──
+  const [batteryLevel, setBatteryLevel] = useState<number>(82);
+  const [isCharging, setIsCharging] = useState<boolean>(true);
+  const [manualBatteryOverride, setManualBatteryOverride] = useState<boolean>(false);
+
+  // ── System Hardware & Alert State (Volume: 0..100 step 2, Brightness: 0..10 step 1) ──
+  // Persisted in localStorage and synced with Windows CoreAudio Master Volume when running locally on Windows
+  const [volume, setVolume] = useState<number>(() => {
+    try {
+      const saved = window.localStorage.getItem('isle_user_volume');
+      if (saved !== null) {
+        const parsed = parseInt(saved, 10);
+        if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 100) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return 20;
+  });
+  const [muted, setMuted] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('isle_user_muted') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [brightness, setBrightness] = useState<number>(() => {
+    try {
+      const saved = window.localStorage.getItem('isle_user_brightness');
+      if (saved !== null) {
+        const parsed = parseInt(saved, 10);
+        if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 10) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return 7;
+  });
+  const [capsLockOn, setCapsLockOn] = useState(false);
+  const [activeAlert, setActiveAlert] = useState<ActiveAlert | null>(null);
+  const [alertHovered, setAlertHovered] = useState(false);
+  const alertTimerRef = useRef<number | null>(null);
+  const lastLocalHardwareChangeRef = useRef<number>(0);
+  const osHardwareAvailableRef = useRef<boolean>(false);
+
+  const syncHardwareToOs = useCallback(
+    (nextPatch: { volume?: number; muted?: boolean; brightness?: number }) => {
+      lastLocalHardwareChangeRef.current = Date.now();
+      try {
+        const winAny = window as any;
+        if (typeof winAny.electronAPI?.setHardwareStatus === 'function') {
+          winAny.electronAPI.setHardwareStatus(nextPatch);
+        } else if (typeof winAny.chrome?.webview?.postMessage === 'function') {
+          winAny.chrome.webview.postMessage({ type: 'hardwareControl', ...nextPatch });
+        }
+      } catch {
+        // ignore
+      }
+      if (osHardwareAvailableRef.current) {
+        fetch('/api/system/hardware-control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(nextPatch),
+        }).catch(() => {});
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('isle_user_volume', String(volume));
+    } catch {
+      // ignore
+    }
+    syncHardwareToOs({ volume, muted });
+  }, [volume, muted, syncHardwareToOs]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('isle_user_muted', String(muted));
+    } catch {
+      // ignore
+    }
+  }, [muted]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('isle_user_brightness', String(brightness));
+    } catch {
+      // ignore
+    }
+    syncHardwareToOs({ brightness });
+  }, [brightness, syncHardwareToOs]);
+
+  const triggerAlert = useCallback(
+    (
+      type: SystemAlertType,
+      opts?: {
+        value?: number;
+        muted?: boolean;
+        capsOn?: boolean;
+        alarmId?: string;
+        alarmTitle?: string;
+        alarmTime?: string;
+      }
+    ) => {
+      if (alertTimerRef.current) {
+        window.clearTimeout(alertTimerRef.current);
+      }
+      // Collapse open island temporarily so top-edge HUD alert is shown cleanly (pageIndex is preserved!)
+      setIsPinnedOpen(false);
+      setIsHovered(false);
+      setDragAutoOpened(false);
+      setAssistantOpen(false);
+
+      const newAlert: ActiveAlert = {
+        id: Date.now(),
+        type,
+        value: opts?.value,
+        muted: opts?.muted,
+        capsOn: opts?.capsOn,
+        permissionState: type === 'permission' ? 'pending' : undefined,
+        alarmId: opts?.alarmId,
+        alarmTitle: opts?.alarmTitle,
+        alarmTime: opts?.alarmTime,
+      };
+      setActiveAlert(newAlert);
+
+      const duration =
+        type === 'volume' || type === 'mute' || type === 'brightness' || type === 'capslock'
+          ? 2000
+          : type === 'permission'
+          ? 9000
+          : type === 'alarm'
+          ? 20000
+          : 3600;
+
+      alertTimerRef.current = window.setTimeout(() => {
+        setActiveAlert((curr) => (curr && curr.id === newAlert.id ? null : curr));
+      }, duration);
+    },
+    []
+  );
+
+  // Real Windows / System Hardware Status Detection (Volume, Brightness, Battery Level & Charging)
+  useEffect(() => {
+    // 1. Poll system hardware status from backend OS probe (syncs Windows Master Volume when running on Windows)
+    const fetchOsHardware = () => {
+      // Avoid overwriting right while user is actively scrolling volume/brightness
+      if (Date.now() - lastLocalHardwareChangeRef.current < 2200) return;
+      fetch('/api/system/hardware-status')
+        .then((r) => r.json())
+        .then((data) => {
+          if (data && data.osHardwareAvailable) {
+            osHardwareAvailableRef.current = true;
+            if (typeof data.batteryLevel === 'number') setBatteryLevel(data.batteryLevel);
+            if (typeof data.isCharging === 'boolean') setIsCharging(data.isCharging);
+            if (typeof data.volume === 'number') setVolume(data.volume);
+            if (typeof data.muted === 'boolean') setMuted(data.muted);
+            if (typeof data.brightness === 'number') setBrightness(data.brightness);
+          }
+        })
+        .catch(() => {});
+    };
+
+    fetchOsHardware();
+    const pollId = window.setInterval(fetchOsHardware, 4000);
+
+    // Listen to native desktop wrapper hardware events (Electron / WebView2) if present
+    const onNativeHardwareMsg = (ev: MessageEvent) => {
+      const payload = ev.data;
+      if (payload && typeof payload === 'object' && payload.type === 'osHardwareStatus') {
+        if (typeof payload.volume === 'number') setVolume(payload.volume);
+        if (typeof payload.muted === 'boolean') setMuted(payload.muted);
+        if (typeof payload.brightness === 'number') setBrightness(payload.brightness);
+      }
+    };
+    window.addEventListener('message', onNativeHardwareMsg);
+
+    // 2. Real Browser / OS Battery API integration (adjusts dynamically to charger events)
+    let batteryObj: any = null;
+    const syncBattery = () => {
+      if (!batteryObj) return;
+      if (typeof batteryObj.level === 'number') {
+        setBatteryLevel(Math.round(batteryObj.level * 100));
+      }
+      if (typeof batteryObj.charging === 'boolean') {
+        setIsCharging(batteryObj.charging);
+      }
+    };
+
+    const onChargingChange = () => {
+      if (!batteryObj) return;
+      const lvl =
+        typeof batteryObj.level === 'number' ? Math.round(batteryObj.level * 100) : batteryLevel;
+      const chg = Boolean(batteryObj.charging);
+      setBatteryLevel(lvl);
+      setIsCharging(chg);
+      triggerAlert(!chg && lvl <= 20 ? 'lowbattery' : 'charging', { value: lvl });
+    };
+
+    const onLevelChange = () => {
+      if (!batteryObj) return;
+      const lvl =
+        typeof batteryObj.level === 'number' ? Math.round(batteryObj.level * 100) : batteryLevel;
+      const chg = Boolean(batteryObj.charging);
+      setBatteryLevel(lvl);
+      setIsCharging(chg);
+      if (!chg && (lvl === 20 || lvl === 15 || lvl === 10)) {
+        triggerAlert('lowbattery', { value: lvl });
+      }
+    };
+
+    if (typeof navigator !== 'undefined' && 'getBattery' in navigator) {
+      (navigator as any)
+        .getBattery()
+        .then((bat: any) => {
+          batteryObj = bat;
+          syncBattery();
+          bat.addEventListener?.('levelchange', onLevelChange);
+          bat.addEventListener?.('chargingchange', onChargingChange);
+        })
+        .catch(() => {
+          // Fallback if unsupported by browser
+        });
+    }
+
+    return () => {
+      window.clearInterval(pollId);
+      window.removeEventListener('message', onNativeHardwareMsg);
+      if (batteryObj) {
+        batteryObj.removeEventListener?.('levelchange', onLevelChange);
+        batteryObj.removeEventListener?.('chargingchange', onChargingChange);
+      }
+    };
+  }, [triggerAlert]);
+
+  // Hold alert open while pointer hovers over it
+  useEffect(() => {
+    if (!activeAlert) return;
+    if (alertHovered) {
+      if (alertTimerRef.current) window.clearTimeout(alertTimerRef.current);
+    } else {
+      alertTimerRef.current = window.setTimeout(() => {
+        setActiveAlert(null);
+      }, 1500);
+    }
+    return () => {
+      if (alertTimerRef.current) window.clearTimeout(alertTimerRef.current);
+    };
+  }, [alertHovered, activeAlert]);
+
+  // ── Page 5: Shelf State & Drag-and-Drop Auto-Expand Controller ──
+  const [shelfFiles, setShelfFiles] = useState<ShelfFile[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [shelfToast, setShelfToast] = useState<string | null>(null);
+  const lastDropTimeRef = useRef<number>(0);
+  const dragLeaveTimerRef = useRef<number | null>(null);
+
+  const [lyricsMode, setLyricsMode] = useState(false);
+  const activePage = ISLAND_PAGES[pageIndex].id;
+  const isExpanded =
+    (isHovered || isPinnedOpen || dragAutoOpened || isDragOver || assistantOpen || lyricsMode) &&
+    !activeAlert;
+
+  // Helper to safely add files to Shelf with Chaos Engineering guards (max 6 files, deduplication, sanitized names)
+  const addFilesToShelf = useCallback(
+    (incoming: { name: string; size: string; ext?: ShelfFileExt }[]) => {
+      const now = Date.now();
+      if (now - lastDropTimeRef.current < 180) return; // Ignore duplicate rapid drop events
+      lastDropTimeRef.current = now;
+
+      if (!incoming || incoming.length === 0) return;
+
+      setShelfFiles((prev) => {
+        if (prev.length >= 6) {
+          setShelfToast('Shelf full (max 6 files)');
+          window.setTimeout(() => setShelfToast(null), 2200);
+          return prev;
+        }
+        const added: ShelfFile[] = incoming.slice(0, 6 - prev.length).map((item, idx) => {
+          const cleanName =
+            item.name
+              .replace(/[\u0000-\u001F<>:"/\\|?*]/g, '')
+              .trim()
+              .slice(0, 64) || 'Document.pdf';
+          return {
+            id: now + idx + Math.floor(Math.random() * 1000),
+            name: cleanName,
+            size: item.size || '120 KB',
+            ext: item.ext || detectFileExt(cleanName),
+          };
+        });
+        return [...prev, ...added];
+      });
+    },
+    []
+  );
+
+  // Global Window Drag-Over Detector: Auto-opens closed Island to Shelf when dragging files near top of screen
+  useEffect(() => {
+    const handleWindowDragOver = (e: DragEvent) => {
+      const types = Array.from(e.dataTransfer?.types || []);
+      const hasFilePayload =
+        types.includes('Files') ||
+        types.includes('application/x-isle-file') ||
+        types.includes('text/plain');
+      if (!hasFilePayload) return;
+
+      // Trigger auto-open when dragging within top 260px of screen (or anywhere if already over island)
+      if (e.clientY <= 260) {
+        e.preventDefault();
+        if (dragLeaveTimerRef.current) {
+          window.clearTimeout(dragLeaveTimerRef.current);
+          dragLeaveTimerRef.current = null;
+        }
+        setActiveAlert(null);
+        setAssistantOpen(false);
+        setSettingsOpen(false);
+        setLyricsMode(false);
+        if (!isPinnedOpen && !isHovered) {
+          setDragAutoOpened(true);
+        }
+        if (ISLAND_PAGES[pageIndex].id !== 'shelf') {
+          navigateToPage(4, 'right');
+        }
+        setIsDragOver(true);
+      }
+    };
+
+    const handleWindowDragLeave = (e: DragEvent) => {
+      if (e.clientY <= 0 || e.clientX <= 0 || e.clientX >= window.innerWidth || e.clientY > 290) {
+        if (dragLeaveTimerRef.current) window.clearTimeout(dragLeaveTimerRef.current);
+        dragLeaveTimerRef.current = window.setTimeout(() => {
+          setIsDragOver(false);
+          setDragAutoOpened(false);
+        }, 220);
+      }
+    };
+
+    const handleWindowDrop = (e: DragEvent) => {
+      if (e.clientY <= 260) {
+        e.preventDefault();
+        setIsDragOver(false);
+        // Parse sample file JSON payload if dragged from the sample bar
+        const sampleJson = e.dataTransfer?.getData('application/x-isle-file');
+        if (sampleJson) {
+          try {
+            const parsed = JSON.parse(sampleJson);
+            if (parsed && typeof parsed.name === 'string') {
+              addFilesToShelf([
+                {
+                  name: parsed.name,
+                  size: parsed.size || '1.0 MB',
+                  ext: parsed.ext || detectFileExt(parsed.name),
+                },
+              ]);
+              return;
+            }
+          } catch {
+            // ignore malformed JSON
+          }
+        }
+        // Parse real OS files dropped from File Explorer / Finder
+        const osFiles = Array.from(e.dataTransfer?.files || []);
+        if (osFiles.length > 0) {
+          addFilesToShelf(
+            osFiles.map((f) => ({
+              name: f.name,
+              size: formatBytes(f.size),
+              ext: detectFileExt(f.name),
+            }))
+          );
+        }
+      }
+    };
+
+    window.addEventListener('dragover', handleWindowDragOver);
+    window.addEventListener('dragleave', handleWindowDragLeave);
+    window.addEventListener('drop', handleWindowDrop);
+    return () => {
+      window.removeEventListener('dragover', handleWindowDragOver);
+      window.removeEventListener('dragleave', handleWindowDragLeave);
+      window.removeEventListener('drop', handleWindowDrop);
+    };
+  }, [addFilesToShelf, isHovered, isPinnedOpen, navigateToPage, pageIndex]);
+
+  // ── Bot Look Customization ──
+  const [botShape] = useState<BotShapeName>('squircle');
+  const [botColor] = useState<BotColorName>('cloud');
+  const botPalette = useMemo(() => paletteFor(botColor, 'classic'), [botColor]);
+
+  // ── Page 1: Real Media Detection, Audio Stream, Song Queue, Smart Mood Shuffle & Synced Lyrics ──
+  // Starts in clean idle "Media" state (zero fake songs!). Automatically detects playing music or plays requested songs.
+  const [activeTrack, setActiveTrack] = useState<RealMediaTrack | null>(null);
+  const [musicQueue, setMusicQueue] = useState<RealMediaTrack[]>([]);
+  const [musicHistory, setMusicHistory] = useState<RealMediaTrack[]>([]);
+  const [moodShuffleEnabled, setMoodShuffleEnabled] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('isle_mood_shuffle_enabled') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  // Tracks shuffle status of external apps (Spotify, YouTube Music, OS Media Session) separately from internal AI shuffle
+  const [externalShuffleEnabled, setExternalShuffleEnabled] = useState<boolean>(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [positionMs, setPositionMs] = useState(0);
+  const [mediaLoading, setMediaLoading] = useState(false);
+  const [bluetoothEnabled, setBluetoothEnabled] = useState(true);
+  const [wifiEnabled, setWifiEnabled] = useState(true);
+  const [flacEnabled, setFlacEnabled] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('isle_flac_enabled') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('isle_flac_enabled', String(flacEnabled));
+    } catch {
+      // ignore
+    }
+  }, [flacEnabled]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('isle_mood_shuffle_enabled', String(moodShuffleEnabled));
+    } catch {
+      // ignore
+    }
+  }, [moodShuffleEnabled]);
+
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const audioFileInputRef = useRef<HTMLInputElement | null>(null);
+  const ytIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
+  const activeLyricLineRef = useRef<HTMLDivElement | null>(null);
+  const lastPlayedSongQueryRef = useRef<string>('');
+  const lastPlayedSongTimeRef = useRef<number>(0);
+  const ytPlayerStateRef = useRef<number>(-1);
+  const ytListeningAckRef = useRef<boolean>(false);
+  const activeTrackRef = useRef<RealMediaTrack | null>(null);
+  const musicQueueRef = useRef<RealMediaTrack[]>([]);
+  const musicHistoryRef = useRef<RealMediaTrack[]>([]);
+  const moodShuffleEnabledRef = useRef<boolean>(moodShuffleEnabled);
+  const externalShuffleEnabledRef = useRef<boolean>(externalShuffleEnabled);
+  const positionMsRef = useRef<number>(0);
+  const shuffleBufferRef = useRef<RealMediaTrack | null>(null);
+  const shufflePrefetchingRef = useRef<boolean>(false);
+  const handleTrackEndedRef = useRef<() => void>(() => {});
+  const lastEndedTriggerRef = useRef<number>(0);
+
+  useEffect(() => {
+    activeTrackRef.current = activeTrack;
+  }, [activeTrack]);
+  useEffect(() => {
+    musicQueueRef.current = musicQueue;
+  }, [musicQueue]);
+  useEffect(() => {
+    musicHistoryRef.current = musicHistory;
+  }, [musicHistory]);
+  useEffect(() => {
+    moodShuffleEnabledRef.current = moodShuffleEnabled;
+  }, [moodShuffleEnabled]);
+  useEffect(() => {
+    externalShuffleEnabledRef.current = externalShuffleEnabled;
+  }, [externalShuffleEnabled]);
+  useEffect(() => {
+    positionMsRef.current = positionMs;
+  }, [positionMs]);
+
+  // Extract dominant color from album cover for warm ambient wash in Lyrics Mode (matches video 00:04-00:10)
+  useEffect(() => {
+    const coverUrl = activeTrack?.coverUrl;
+    if (!coverUrl) return;
+    let cancelled = false;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      if (cancelled) return;
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 16;
+        canvas.height = 16;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(img, 0, 0, 16, 16);
+        const data = ctx.getImageData(0, 0, 16, 16).data;
+        let rSum = 0;
+        let gSum = 0;
+        let bSum = 0;
+        let count = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+          if (lum > 24 && lum < 235) {
+            rSum += r;
+            gSum += g;
+            bSum += b;
+            count++;
+          }
+        }
+        if (count > 0) {
+          const nr = Math.min(1, Math.max(0.18, rSum / count / 255));
+          const ng = Math.min(1, Math.max(0.15, gSum / count / 255));
+          const nb = Math.min(1, Math.max(0.12, bSum / count / 255));
+          setActiveTrack((prev) =>
+            prev && prev.coverUrl === coverUrl ? { ...prev, tintRgb: [nr, ng, nb] } : prev
+          );
+        }
+      } catch {
+        // Keep default warm amber tint if CORS blocks pixel read
+      }
+    };
+    img.src = coverUrl;
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTrack?.coverUrl]);
+
+  const currentTrack = useMemo<RealMediaTrack>(
+    () =>
+      activeTrack || {
+        title: 'Media',
+        artist: '',
+        coverUrl: '',
+        audioUrl: '',
+        durationMs: 0,
+        lrc: '',
+        tintRgb: [0.54, 0.36, 0.16] as [number, number, number],
+      },
+    [activeTrack]
+  );
+
+  const parsedLyrics = useMemo(
+    () => parseLrc(currentTrack.lrc || '', currentTrack.wordsByLine),
+    [currentTrack.lrc, currentTrack.wordsByLine]
+  );
+
+  const activeLineIndex = useMemo(() => {
+    if (!parsedLyrics || parsedLyrics.length === 0) return -1;
+    let curr = -1;
     for (let i = 0; i < parsedLyrics.length; i++) {
-      if (parsedLyrics[i].timeMs <= trackPosMs) {
-        idx = i;
+      if (positionMs >= parsedLyrics[i].timeMs) {
+        curr = i;
       } else {
         break;
       }
     }
-    return idx;
-  }, [parsedLyrics, trackPosMs]);
+    return curr;
+  }, [parsedLyrics, positionMs]);
 
-  // ── Focus (Pomodoro) State ──
-  const [pomoConfig, setPomoConfig] = useState(DEFAULT_POMODORO_CONFIG);
-  const [pomoPhase, setPomoPhase] = useState<Phase>(Phase.Idle);
-  const [pomoRunning, setPomoRunning] = useState(false);
-  const [pomoRemainingMs, setPomoRemainingMs] = useState(
-    DEFAULT_POMODORO_CONFIG.focusMinutes * 60_000
+  // Auto-scroll active lyric line smoothly to the vertical center of the lyrics container
+  useEffect(() => {
+    if (!lyricsMode) return;
+    const container = lyricsContainerRef.current;
+    const lineEl = activeLyricLineRef.current;
+    if (container && lineEl) {
+      const targetTop =
+        lineEl.offsetTop - container.clientHeight / 2 + lineEl.clientHeight / 2;
+      container.scrollTo({
+        top: Math.max(0, targetTop),
+        behavior: 'smooth',
+      });
+    }
+  }, [lyricsMode, activeLineIndex]);
+
+  // ── Real-Time Beat-Reactive 4-Band Equalizer Visualizer (Web Audio FFT + Track Beat/Vocal Envelope) ──
+  const [audioBands, setAudioBands] = useState<[number, number, number, number]>([0.2, 0.2, 0.2, 0.2]);
+  const webAudioCtxRef = useRef<AudioContext | null>(null);
+  const webAudioAnalyserRef = useRef<AnalyserNode | null>(null);
+  const webAudioSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+
+  useEffect(() => {
+    if (!isPlaying || !activeTrack || muted || volume === 0) {
+      setAudioBands([0.18, 0.18, 0.18, 0.18]);
+      return;
+    }
+
+    // Attempt to wire Web Audio API AnalyserNode when playing local/direct HTML5 <audio>
+    const audioEl = audioElRef.current;
+    if (audioEl && activeTrack.audioUrl && !webAudioAnalyserRef.current) {
+      try {
+        const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+        if (Ctx) {
+          const ctx: AudioContext = webAudioCtxRef.current || new Ctx();
+          webAudioCtxRef.current = ctx;
+          if (ctx.state === 'suspended') {
+            ctx.resume().catch(() => {});
+          }
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 64;
+          analyser.smoothingTimeConstant = 0.68;
+          if (!webAudioSourceRef.current) {
+            const src = ctx.createMediaElementSource(audioEl);
+            src.connect(analyser);
+            analyser.connect(ctx.destination);
+            webAudioSourceRef.current = src;
+          }
+          webAudioAnalyserRef.current = analyser;
+        }
+      } catch {
+        // Fallback to beat/vocal-envelope synthesis if CORS or MediaElementSource already bound
+      }
+    }
+
+    // Compute deterministic track tempo (BPM) from title + artist so beat pulses match the track's feel
+    const seedStr = `${activeTrack.title || ''}-${activeTrack.artist || ''}`;
+    let hash = 0;
+    for (let i = 0; i < seedStr.length; i++) {
+      hash = (hash * 31 + seedStr.charCodeAt(i)) | 0;
+    }
+    const trackBpm = 94 + (Math.abs(hash) % 44); // 94..137 BPM
+    const beatPeriodSec = 60 / trackBpm;
+
+    const fftData = new Uint8Array(32);
+    let rafId = 0;
+    let lastUpdate = 0;
+    const prevBands: [number, number, number, number] = [0.25, 0.35, 0.3, 0.22];
+
+    const tickEqualizer = (now: number) => {
+      if (now - lastUpdate >= 36) {
+        lastUpdate = now;
+        let b0 = 0;
+        let b1 = 0;
+        let b2 = 0;
+        let b3 = 0;
+        let usedRealFft = false;
+
+        if (webAudioAnalyserRef.current && activeTrack.audioUrl) {
+          try {
+            webAudioAnalyserRef.current.getByteFrequencyData(fftData);
+            const sum = fftData[0] + fftData[1] + fftData[2] + fftData[3] + fftData[4] + fftData[5];
+            if (sum > 8) {
+              usedRealFft = true;
+              b0 = Math.min(1, ((fftData[0] + fftData[1]) / 2 / 255) * 1.15);
+              b1 = Math.min(1, ((fftData[2] + fftData[3] + fftData[4]) / 3 / 255) * 1.25);
+              b2 = Math.min(1, ((fftData[5] + fftData[6] + fftData[7] + fftData[8]) / 4 / 255) * 1.35);
+              b3 = Math.min(1, ((fftData[9] + fftData[10] + fftData[11] + fftData[12]) / 4 / 255) * 1.45);
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        if (!usedRealFft) {
+          // Real-Time Beat & Vocal-Syllable Envelope Analyzer synced to positionMs & active lyrics
+          const posSec = (positionMsRef.current || now) / 1000;
+          const beatPhase = (posSec % beatPeriodSec) / beatPeriodSec;
+          const halfBeatPhase = ((posSec + beatPeriodSec * 0.5) % beatPeriodSec) / beatPeriodSec;
+          const sixteenthPhase = (posSec % (beatPeriodSec / 4)) / (beatPeriodSec / 4);
+
+          // Sharp kick transient at beat onset + sub-bass decay
+          const kickEnvelope = Math.pow(Math.max(0, 1 - beatPhase * 2.4), 1.8);
+          // Snare / backbeat & bassline groove on off-beats
+          const grooveEnvelope = Math.pow(Math.max(0, 1 - halfBeatPhase * 2.1), 1.6);
+          // Check if vocals are currently active in synced lyrics at current timestamp
+          let vocalEnergy = 0.45;
+          if (parsedLyrics.length > 0 && activeLineIndex >= 0) {
+            const activeLine = parsedLyrics[activeLineIndex];
+            const nextLine = parsedLyrics[activeLineIndex + 1];
+            const lineStart = activeLine?.timeMs ?? 0;
+            const lineEnd = nextLine ? nextLine.timeMs : lineStart + 4500;
+            if (positionMsRef.current >= lineStart && positionMsRef.current <= lineEnd) {
+              const syllableWave =
+                0.55 +
+                0.45 * Math.abs(Math.sin(posSec * 9.5 + (activeLineIndex % 5)) * Math.cos(posSec * 4.2));
+              vocalEnergy = activeLine.text.trim().length > 0 ? 0.35 + syllableWave * 0.65 : 0.25;
+            } else {
+              vocalEnergy = 0.28;
+            }
+          } else {
+            vocalEnergy = 0.42 + 0.45 * Math.abs(Math.sin(posSec * 6.8) * Math.cos(posSec * 3.1));
+          }
+
+          // Hi-hat / treble shimmer on 16th subdivisions
+          const hiHatShimmer =
+            0.3 +
+            0.55 * Math.pow(Math.max(0, 1 - sixteenthPhase * 1.9), 1.5) +
+            0.15 * Math.abs(Math.sin(posSec * 17.3));
+
+          b0 = Math.min(1, 0.22 + kickEnvelope * 0.68 + grooveEnvelope * 0.18);
+          b1 = Math.min(1, 0.26 + grooveEnvelope * 0.52 + kickEnvelope * 0.34);
+          b2 = Math.min(1, 0.2 + vocalEnergy * 0.78);
+          b3 = Math.min(1, 0.18 + hiHatShimmer * 0.72);
+        }
+
+        // Smooth attack / release interpolation so bars bounce fluidly without jitter
+        const nextBands: [number, number, number, number] = [
+          +(prevBands[0] * 0.32 + b0 * 0.68).toFixed(3),
+          +(prevBands[1] * 0.32 + b1 * 0.68).toFixed(3),
+          +(prevBands[2] * 0.32 + b2 * 0.68).toFixed(3),
+          +(prevBands[3] * 0.32 + b3 * 0.68).toFixed(3),
+        ];
+        prevBands[0] = nextBands[0];
+        prevBands[1] = nextBands[1];
+        prevBands[2] = nextBands[2];
+        prevBands[3] = nextBands[3];
+        setAudioBands(nextBands);
+      }
+      rafId = window.requestAnimationFrame(tickEqualizer);
+    };
+
+    rafId = window.requestAnimationFrame(tickEqualizer);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [isPlaying, activeTrack, muted, volume, parsedLyrics, activeLineIndex]);
+
+  // Ensure active track always fetches synced lyrics from multi-provider chain if lrc is missing
+  useEffect(() => {
+    if (!activeTrack || activeTrack.lrc || !activeTrack.title || activeTrack.title === 'Media') {
+      return;
+    }
+    let cancelled = false;
+    const fetchMissingLyrics = async () => {
+      try {
+        const params = new URLSearchParams({
+          track_name: activeTrack.title,
+          artist_name: activeTrack.artist || '',
+          q: `${activeTrack.title} ${activeTrack.artist || ''}`.trim(),
+        });
+        const res = await fetch(`/api/music/lyrics?${params.toString()}`);
+        const data = await res.json();
+        if (!cancelled && data?.lrc) {
+          setActiveTrack((prev) =>
+            prev && prev.title === activeTrack.title
+              ? {
+                  ...prev,
+                  lrc: data.lrc,
+                  syncType: data.syncType,
+                  provider: data.provider,
+                  wordsByLine: data.wordsByLine,
+                  lrclibId: data.lrclibId,
+                }
+              : prev
+          );
+        }
+      } catch {
+        // ignore
+      }
+    };
+    fetchMissingLyrics();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTrack?.title, activeTrack?.artist, activeTrack?.lrc]);
+
+  // Listen to postMessages from embedded YouTube IFrame for full song stream timing
+  // Guards against premature playerState === 0 events during initial buffer so tracks never jump mid-song
+  useEffect(() => {
+    const canTriggerNaturalEnd = () => {
+      const tr = activeTrackRef.current;
+      if (!tr || tr.sourceType === 'external') return false;
+      const elapsedSinceStart = Date.now() - lastPlayedSongTimeRef.current;
+      const dur = tr.durationMs && tr.durationMs > 20000 ? tr.durationMs : 180000;
+      const pos = positionMsRef.current;
+      return elapsedSinceStart > 8000 && pos >= Math.max(20000, dur - 8000);
+    };
+
+    const handleYtMessage = (event: MessageEvent) => {
+      try {
+        if (typeof event.data !== 'string') return;
+        const data = JSON.parse(event.data);
+        if (data.event) {
+          ytListeningAckRef.current = true;
+        }
+        if ((data.event === 'infoDelivery' || data.event === 'initialDelivery') && data.info) {
+          if (typeof data.info.currentTime === 'number' && data.info.currentTime > 0) {
+            const nextPos = Math.round(data.info.currentTime * 1000);
+            positionMsRef.current = nextPos;
+            setPositionMs(nextPos);
+          }
+          if (typeof data.info.duration === 'number' && data.info.duration > 40) {
+            const ytDurMs = Math.round(data.info.duration * 1000);
+            setActiveTrack((prev) =>
+              prev && prev.sourceType !== 'external' && Math.abs(prev.durationMs - ytDurMs) > 1000
+                ? { ...prev, durationMs: ytDurMs }
+                : prev
+            );
+          }
+          if (typeof data.info.playerState === 'number') {
+            ytPlayerStateRef.current = data.info.playerState;
+            if (data.info.playerState === 1) {
+              setIsPlaying(true);
+            } else if (data.info.playerState === 2) {
+              setIsPlaying(false);
+            } else if (data.info.playerState === 0 && canTriggerNaturalEnd()) {
+              handleTrackEndedRef.current();
+            }
+          }
+        } else if (data.event === 'onStateChange' && typeof data.info === 'number') {
+          ytPlayerStateRef.current = data.info;
+          if (data.info === 1) {
+            setIsPlaying(true);
+          } else if (data.info === 2) {
+            setIsPlaying(false);
+          } else if (data.info === 0 && canTriggerNaturalEnd()) {
+            handleTrackEndedRef.current();
+          }
+        }
+      } catch {
+        // ignore non-json messages
+      }
+    };
+    window.addEventListener('message', handleYtMessage);
+    return () => window.removeEventListener('message', handleYtMessage);
+  }, []);
+
+  // Ensure YouTube IFrame JS API handshake succeeds so real-time currentTime & state events always stream
+  useEffect(() => {
+    if (!activeTrack?.youtubeVideoId) return;
+    ytListeningAckRef.current = false;
+    ytPlayerStateRef.current = -1;
+
+    const sendHandshake = () => {
+      const cw = ytIframeRef.current?.contentWindow;
+      if (!cw) return;
+      try {
+        cw.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), '*');
+        cw.postMessage(
+          JSON.stringify({
+            event: 'command',
+            func: 'addEventListener',
+            args: ['onStateChange'],
+          }),
+          '*'
+        );
+      } catch {
+        // ignore
+      }
+    };
+
+    sendHandshake();
+    const id = window.setInterval(() => {
+      if (!ytListeningAckRef.current) {
+        sendHandshake();
+      }
+    }, 400);
+
+    return () => window.clearInterval(id);
+  }, [activeTrack?.youtubeVideoId]);
+
+  // Sync YouTube IFrame volume & mute state
+  useEffect(() => {
+    const cw = ytIframeRef.current?.contentWindow;
+    if (!cw || !activeTrack?.youtubeVideoId) return;
+    try {
+      cw.postMessage(
+        JSON.stringify({ event: 'command', func: muted ? 'mute' : 'unMute', args: '' }),
+        '*'
+      );
+      cw.postMessage(
+        JSON.stringify({
+          event: 'command',
+          func: 'setVolume',
+          args: [muted ? 0 : volume],
+        }),
+        '*'
+      );
+    } catch {
+      // ignore
+    }
+  }, [volume, muted, activeTrack?.youtubeVideoId]);
+
+  // Send media transport or shuffle command to External App (Spotify, YouTube Music, or Windows GSMTC OS Media Session)
+  const sendExternalMediaCommand = useCallback(
+    async (
+      action: 'play_pause' | 'play' | 'pause' | 'next' | 'prev' | 'shuffle',
+      targetShuffle?: boolean
+    ) => {
+      try {
+        // 1. Electron / WebView2 Native Bridge if running inside desktop shell
+        const winAny = window as any;
+        if (typeof winAny.electronAPI?.mediaControl === 'function') {
+          winAny.electronAPI.mediaControl(action, targetShuffle);
+        } else if (typeof winAny.chrome?.webview?.postMessage === 'function') {
+          winAny.chrome.webview.postMessage({
+            type: 'mediaControl',
+            action,
+            targetShuffle,
+            sourceApp: activeTrackRef.current?.externalApp,
+          });
+        }
+
+        // 2. Server-side Windows GSMTC / OS Media Controller endpoint
+        const res = await fetch('/api/music/os-control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action,
+            targetShuffle,
+            sourceApp: activeTrackRef.current?.externalApp,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (typeof data?.shuffleActive === 'boolean') {
+            setExternalShuffleEnabled(data.shuffleActive);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    },
+    []
   );
-  const [pomoDurationMs, setPomoDurationMs] = useState(
-    DEFAULT_POMODORO_CONFIG.focusMinutes * 60_000
+
+  // Load & play a track (Internal AI Player or External OS Media Session)
+  const loadAndPlayRealTrack = useCallback(
+    (trackInfo: {
+      title: string;
+      artist: string;
+      coverUrl?: string;
+      audioUrl?: string;
+      isFlac?: boolean;
+      durationMs?: number;
+      youtubeVideoId?: string;
+      youtubeMusicUrl?: string;
+      spotifyUrl?: string;
+      lrc?: string;
+      syncType?: 'WORD' | 'LINE';
+      provider?: string;
+      wordsByLine?: any[];
+      lrclibId?: number;
+      sourceType?: 'internal' | 'external';
+      externalApp?: string;
+    }) => {
+      const isExternal = trackInfo.sourceType === 'external';
+      const isLocalBlob = Boolean(trackInfo.audioUrl && trackInfo.audioUrl.startsWith('blob:'));
+      const isDirectFlacStream = Boolean(
+        !isExternal && trackInfo.isFlac && trackInfo.audioUrl && trackInfo.audioUrl.startsWith('http')
+      );
+      const useHtmlAudio = !isExternal && (isLocalBlob || isDirectFlacStream);
+      const safeDurationMs =
+        typeof trackInfo.durationMs === 'number' && trackInfo.durationMs > 40000
+          ? trackInfo.durationMs
+          : 210000;
+
+      const nextTrack: RealMediaTrack = {
+        title: trackInfo.title || 'Media',
+        artist: trackInfo.artist || '',
+        coverUrl: trackInfo.coverUrl || '',
+        audioUrl: useHtmlAudio ? trackInfo.audioUrl : '',
+        isFlac: Boolean(trackInfo.isFlac || flacEnabled),
+        durationMs: safeDurationMs,
+        youtubeVideoId: isExternal || isLocalBlob ? undefined : trackInfo.youtubeVideoId,
+        youtubeMusicUrl: trackInfo.youtubeMusicUrl,
+        spotifyUrl: trackInfo.spotifyUrl,
+        lrc: trackInfo.lrc || '',
+        syncType: trackInfo.syncType,
+        provider: trackInfo.provider,
+        wordsByLine: trackInfo.wordsByLine,
+        lrclibId: trackInfo.lrclibId,
+        sourceType: isExternal ? 'external' : 'internal',
+        externalApp: trackInfo.externalApp,
+        tintRgb: [0.54, 0.36, 0.16],
+      };
+      ytPlayerStateRef.current = -1;
+      ytListeningAckRef.current = false;
+      activeTrackRef.current = nextTrack;
+      setActiveTrack(nextTrack);
+      positionMsRef.current = 0;
+      setPositionMs(0);
+      setIsPlaying(true);
+      lastPlayedSongQueryRef.current = (nextTrack.title || '').toLowerCase();
+      lastPlayedSongTimeRef.current = Date.now();
+
+      if (audioElRef.current) {
+        audioElRef.current.pause();
+        audioElRef.current.currentTime = 0;
+        if (useHtmlAudio && nextTrack.audioUrl) {
+          audioElRef.current.src = nextTrack.audioUrl;
+          audioElRef.current.volume = muted ? 0 : Math.min(1, Math.max(0, volume / 100));
+          audioElRef.current
+            .play()
+            .then(() => setIsPlaying(true))
+            .catch(() => {
+              // If direct FLAC stream fails CORS/codec, fall back seamlessly to YouTube Full Audio
+              setActiveTrack((prev) => (prev ? { ...prev, audioUrl: '' } : prev));
+              setIsPlaying(true);
+            });
+        } else {
+          audioElRef.current.removeAttribute('src');
+          audioElRef.current.load();
+        }
+      }
+    },
+    [flacEnabled, muted, volume]
+  );
+
+  // Source-Aware Play / Pause Toggle:
+  // - If playing from External App (Spotify, YouTube Music, OS Media), sends play_pause to external session
+  // - If playing from Internal AI Player, controls internal YouTube / HTML5 audio stream
+  const handleTogglePlay = useCallback(() => {
+    if (activeTrackRef.current?.sourceType === 'external') {
+      setIsPlaying((curr) => !curr);
+      sendExternalMediaCommand('play_pause');
+      return;
+    }
+
+    setIsPlaying((currPlaying) => {
+      const nextPlaying = !currPlaying;
+      ytPlayerStateRef.current = nextPlaying ? 1 : 2;
+      if (activeTrack?.youtubeVideoId && !activeTrack?.audioUrl && ytIframeRef.current?.contentWindow) {
+        ytIframeRef.current.contentWindow.postMessage(
+          JSON.stringify({
+            event: 'command',
+            func: nextPlaying ? 'playVideo' : 'pauseVideo',
+            args: '',
+          }),
+          '*'
+        );
+      }
+      if (audioElRef.current && activeTrack?.audioUrl) {
+        if (nextPlaying) {
+          audioElRef.current.play().catch(() => {});
+        } else {
+          audioElRef.current.pause();
+        }
+      }
+      return nextPlaying;
+    });
+  }, [activeTrack?.audioUrl, activeTrack?.youtubeVideoId, sendExternalMediaCommand]);
+
+  // Source-Aware Shuffle Toggle:
+  // - If music is from External App (Spotify / YouTube Music / OS Media), toggles the external app's native shuffle
+  // - If music is from Internal AI Player (or idle), toggles Internal AI Mood Shuffle without interrupting current playback
+  const handleToggleShuffle = useCallback(() => {
+    if (activeTrackRef.current?.sourceType === 'external') {
+      const nextExternalShuffle = !externalShuffleEnabledRef.current;
+      externalShuffleEnabledRef.current = nextExternalShuffle;
+      setExternalShuffleEnabled(nextExternalShuffle);
+      sendExternalMediaCommand('shuffle', nextExternalShuffle);
+      return;
+    }
+    setMoodShuffleEnabled((prev) => !prev);
+  }, [sendExternalMediaCommand]);
+
+  const handleSeek = useCallback(
+    (nextMs: number) => {
+      positionMsRef.current = nextMs;
+      setPositionMs(nextMs);
+      if (activeTrack?.youtubeVideoId && !activeTrack?.audioUrl && ytIframeRef.current?.contentWindow) {
+        ytIframeRef.current.contentWindow.postMessage(
+          JSON.stringify({ event: 'command', func: 'seekTo', args: [nextMs / 1000, true] }),
+          '*'
+        );
+      }
+      if (audioElRef.current && activeTrack?.audioUrl) {
+        audioElRef.current.currentTime = nextMs / 1000;
+      }
+    },
+    [activeTrack?.audioUrl, activeTrack?.youtubeVideoId]
+  );
+
+  // Build exclusion params (both titles & videoIds) so Shuffle never repeats the current or recent songs
+  const buildShuffleExclusionParams = useCallback((base?: RealMediaTrack | null) => {
+    const refTrack = base || activeTrackRef.current;
+    const excludedTitles = [
+      refTrack?.title || '',
+      shuffleBufferRef.current?.title || '',
+      ...musicHistoryRef.current.slice(0, 10).map((t) => t.title),
+      ...musicQueueRef.current.slice(0, 6).map((t) => t.title),
+    ]
+      .filter(Boolean)
+      .join('|');
+
+    const excludedVideoIds = [
+      refTrack?.youtubeVideoId || '',
+      shuffleBufferRef.current?.youtubeVideoId || '',
+      ...musicHistoryRef.current.slice(0, 10).map((t) => t.youtubeVideoId || ''),
+      ...musicQueueRef.current.slice(0, 6).map((t) => t.youtubeVideoId || ''),
+    ]
+      .filter(Boolean)
+      .join('|');
+
+    return { excludedTitles, excludedVideoIds };
+  }, []);
+
+  // Background pre-fetcher for Internal AI Mood Shuffle so clicking Next (>>) switches tracks instantaneously
+  const prefetchNextShuffleTrack = useCallback(
+    async (seed?: RealMediaTrack | null) => {
+      const base = seed || activeTrackRef.current;
+      if (!base || base.sourceType === 'external') return;
+      if (shufflePrefetchingRef.current || shuffleBufferRef.current) return;
+
+      shufflePrefetchingRef.current = true;
+      try {
+        const { excludedTitles, excludedVideoIds } = buildShuffleExclusionParams(base);
+        const params = new URLSearchParams({
+          title: base.title || '',
+          artist: base.artist || '',
+          exclude: excludedTitles,
+          excludeVideoIds: excludedVideoIds,
+          flac: flacEnabled ? 'true' : 'false',
+        });
+        const res = await fetch(`/api/music/mood-shuffle?${params.toString()}`);
+        const data = await res.json();
+        if (data?.found && data?.track) {
+          const t = data.track;
+          const isSameAsActive =
+            activeTrackRef.current &&
+            ((t.youtubeVideoId && t.youtubeVideoId === activeTrackRef.current.youtubeVideoId) ||
+              t.title?.toLowerCase() === activeTrackRef.current.title?.toLowerCase());
+          if (!isSameAsActive) {
+            shuffleBufferRef.current = {
+              ...t,
+              sourceType: 'internal',
+              tintRgb: [0.54, 0.36, 0.16],
+            };
+          }
+        }
+      } catch {
+        // ignore
+      } finally {
+        shufflePrefetchingRef.current = false;
+      }
+    },
+    [buildShuffleExclusionParams, flacEnabled]
+  );
+
+  // Whenever an internal track is playing and Mood Shuffle is enabled, pre-buffer the next mood track in the background
+  // IMPORTANT: Toggling moodShuffleEnabled ON never interrupts the currently playing track!
+  useEffect(() => {
+    if (moodShuffleEnabled && activeTrack && activeTrack.sourceType !== 'external') {
+      prefetchNextShuffleTrack(activeTrack);
+    }
+  }, [moodShuffleEnabled, activeTrack?.title, activeTrack?.youtubeVideoId, prefetchNextShuffleTrack]);
+
+  // Search song & synced lyrics via /api/music/search (Internal AI Player)
+  const handleSearchAndPlayMedia = useCallback(
+    async (queryStr: string) => {
+      const q = queryStr.trim();
+      if (!q) return;
+      lastPlayedSongQueryRef.current = q.toLowerCase();
+      lastPlayedSongTimeRef.current = Date.now();
+      setMediaLoading(true);
+      try {
+        const res = await fetch(
+          `/api/music/search?q=${encodeURIComponent(q)}&flac=${flacEnabled ? 'true' : 'false'}`
+        );
+        const data = await res.json();
+        if (data?.found && data?.track) {
+          if (activeTrackRef.current && activeTrackRef.current.sourceType !== 'external') {
+            setMusicHistory((prev) => [activeTrackRef.current!, ...prev.slice(0, 19)]);
+          }
+          shuffleBufferRef.current = null;
+          loadAndPlayRealTrack({ ...data.track, sourceType: 'internal' });
+        }
+      } catch {
+        // ignore
+      } finally {
+        setMediaLoading(false);
+      }
+    },
+    [flacEnabled, loadAndPlayRealTrack]
+  );
+
+  // Enqueue a resolved track (plays immediately if nothing is playing right now)
+  const enqueueResolvedTrack = useCallback(
+    (trackInfo: any) => {
+      if (!trackInfo) return;
+      const safeDurationMs =
+        typeof trackInfo.durationMs === 'number' && trackInfo.durationMs > 40000
+          ? trackInfo.durationMs
+          : 210000;
+      const queuedItem: RealMediaTrack = {
+        title: trackInfo.title || 'Media',
+        artist: trackInfo.artist || '',
+        coverUrl: trackInfo.coverUrl || '',
+        audioUrl: trackInfo.audioUrl || '',
+        isFlac: Boolean(trackInfo.isFlac || flacEnabled),
+        durationMs: safeDurationMs,
+        youtubeVideoId: trackInfo.youtubeVideoId,
+        youtubeMusicUrl: trackInfo.youtubeMusicUrl,
+        spotifyUrl: trackInfo.spotifyUrl,
+        lrc: trackInfo.lrc || '',
+        syncType: trackInfo.syncType,
+        provider: trackInfo.provider,
+        wordsByLine: trackInfo.wordsByLine,
+        lrclibId: trackInfo.lrclibId,
+        sourceType: 'internal',
+        tintRgb: [0.54, 0.36, 0.16],
+      };
+
+      if (!activeTrackRef.current || activeTrackRef.current.sourceType === 'external') {
+        loadAndPlayRealTrack(queuedItem);
+        return;
+      }
+
+      setMusicQueue((prev) => [...prev, queuedItem]);
+    },
+    [flacEnabled, loadAndPlayRealTrack]
+  );
+
+  // Search song & add to Music Queue (Antrian Lagu)
+  const handleQueueSongMedia = useCallback(
+    async (queryStr: string) => {
+      const q = queryStr.trim();
+      if (!q) return;
+      if (!activeTrackRef.current || activeTrackRef.current.sourceType === 'external') {
+        handleSearchAndPlayMedia(q);
+        return;
+      }
+      try {
+        const res = await fetch(
+          `/api/music/search?q=${encodeURIComponent(q)}&flac=${flacEnabled ? 'true' : 'false'}`
+        );
+        const data = await res.json();
+        if (data?.found && data?.track) {
+          enqueueResolvedTrack(data.track);
+        }
+      } catch {
+        // ignore
+      }
+    },
+    [enqueueResolvedTrack, flacEnabled, handleSearchAndPlayMedia]
+  );
+
+  // Smart Mood Shuffle (Internal AI Player): Play pre-buffered shuffle track immediately or fetch a new mood-matched song
+  const triggerSmartMoodShuffle = useCallback(
+    async (seedTrack?: RealMediaTrack | null) => {
+      const base = seedTrack || activeTrackRef.current;
+
+      // 1. If we already pre-buffered a distinct next shuffle track, play it immediately with zero wait!
+      const buffered = shuffleBufferRef.current;
+      if (
+        buffered &&
+        (!base ||
+          ((!buffered.youtubeVideoId || buffered.youtubeVideoId !== base.youtubeVideoId) &&
+            buffered.title.toLowerCase() !== base.title.toLowerCase()))
+      ) {
+        shuffleBufferRef.current = null;
+        if (activeTrackRef.current && activeTrackRef.current.sourceType !== 'external') {
+          setMusicHistory((prev) => [activeTrackRef.current!, ...prev.slice(0, 19)]);
+        }
+        loadAndPlayRealTrack({ ...buffered, sourceType: 'internal' });
+        window.setTimeout(() => prefetchNextShuffleTrack(buffered), 400);
+        return;
+      }
+
+      // 2. Otherwise fetch live from /api/music/mood-shuffle with strict title & videoId exclusion
+      const { excludedTitles, excludedVideoIds } = buildShuffleExclusionParams(base);
+      setMediaLoading(true);
+      try {
+        const params = new URLSearchParams({
+          title: base?.title || '',
+          artist: base?.artist || '',
+          exclude: excludedTitles,
+          excludeVideoIds: excludedVideoIds,
+          flac: flacEnabled ? 'true' : 'false',
+        });
+        const res = await fetch(`/api/music/mood-shuffle?${params.toString()}`);
+        const data = await res.json();
+        if (data?.found && data?.track) {
+          if (activeTrackRef.current && activeTrackRef.current.sourceType !== 'external') {
+            setMusicHistory((prev) => [activeTrackRef.current!, ...prev.slice(0, 19)]);
+          }
+          shuffleBufferRef.current = null;
+          loadAndPlayRealTrack({ ...data.track, sourceType: 'internal' });
+        }
+      } catch {
+        // ignore
+      } finally {
+        setMediaLoading(false);
+      }
+    },
+    [buildShuffleExclusionParams, flacEnabled, loadAndPlayRealTrack, prefetchNextShuffleTrack]
+  );
+
+  // Automatically advance to next queued song OR trigger Smart Mood Shuffle ONLY when an internal track genuinely finishes
+  const handleTrackEnded = useCallback(() => {
+    if (activeTrackRef.current?.sourceType === 'external') return;
+    const now = Date.now();
+    if (now - lastEndedTriggerRef.current < 2500) return;
+    lastEndedTriggerRef.current = now;
+
+    const currentQ = musicQueueRef.current;
+    if (currentQ.length > 0) {
+      const [nextTrack, ...restQueue] = currentQ;
+      setMusicQueue(restQueue);
+      if (activeTrackRef.current) {
+        setMusicHistory((prev) => [activeTrackRef.current!, ...prev.slice(0, 19)]);
+      }
+      loadAndPlayRealTrack({ ...nextTrack, sourceType: 'internal' });
+      return;
+    }
+
+    if (moodShuffleEnabledRef.current && activeTrackRef.current) {
+      triggerSmartMoodShuffle(activeTrackRef.current);
+      return;
+    }
+
+    setIsPlaying(false);
+    positionMsRef.current = 0;
+    setPositionMs(0);
+  }, [loadAndPlayRealTrack, triggerSmartMoodShuffle]);
+
+  useEffect(() => {
+    handleTrackEndedRef.current = handleTrackEnded;
+  }, [handleTrackEnded]);
+
+  // Poll OS Media Session (/api/music/os-now-playing) to detect External Apps (Spotify, YouTube Music, OS Media)
+  // and synchronize external shuffle state
+  const refreshExternalOsMedia = useCallback(async () => {
+    try {
+      const res = await fetch('/api/music/os-now-playing');
+      const data = await res.json();
+      if (typeof data?.shuffleActive === 'boolean') {
+        setExternalShuffleEnabled(data.shuffleActive);
+      }
+      // Only take over activeTrack if no internal AI track is currently active (or if activeTrack is already external)
+      const curr = activeTrackRef.current;
+      if (data?.playing && data?.track && (!curr || curr.sourceType === 'external')) {
+        const extTrack: RealMediaTrack = {
+          ...data.track,
+          sourceType: 'external',
+          externalApp: data.sourceApp || data.track.externalApp || 'Spotify',
+          youtubeVideoId: undefined,
+          audioUrl: '',
+          tintRgb: curr?.tintRgb || [0.54, 0.36, 0.16],
+        };
+        const isDifferentSong =
+          !curr ||
+          curr.title.toLowerCase() !== extTrack.title.toLowerCase() ||
+          curr.artist.toLowerCase() !== extTrack.artist.toLowerCase();
+        if (isDifferentSong) {
+          activeTrackRef.current = extTrack;
+          setActiveTrack(extTrack);
+          const initPos = typeof data.positionMs === 'number' ? data.positionMs : 0;
+          positionMsRef.current = initPos;
+          setPositionMs(initPos);
+        } else if (typeof data.positionMs === 'number' && Math.abs(positionMsRef.current - data.positionMs) > 2500) {
+          positionMsRef.current = data.positionMs;
+          setPositionMs(data.positionMs);
+        }
+        setIsPlaying(!data.isPaused);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshExternalOsMedia();
+    const id = window.setInterval(refreshExternalOsMedia, 6000);
+    return () => window.clearInterval(id);
+  }, [refreshExternalOsMedia]);
+
+  // Next Track button (>>):
+  // - External App (Spotify / YouTube Music / OS Media): sends 'next' directly to external app
+  // - Internal AI Player: plays next queued song OR next mood-shuffle track immediately
+  const handleNextTrack = useCallback(() => {
+    if (activeTrackRef.current?.sourceType === 'external') {
+      sendExternalMediaCommand('next');
+      positionMsRef.current = 0;
+      setPositionMs(0);
+      window.setTimeout(() => refreshExternalOsMedia(), 650);
+      return;
+    }
+
+    const currentQ = musicQueueRef.current;
+    if (currentQ.length > 0) {
+      const [nextTrack, ...restQueue] = currentQ;
+      setMusicQueue(restQueue);
+      if (activeTrackRef.current) {
+        setMusicHistory((prev) => [activeTrackRef.current!, ...prev.slice(0, 19)]);
+      }
+      loadAndPlayRealTrack({ ...nextTrack, sourceType: 'internal' });
+      return;
+    }
+
+    if (activeTrackRef.current) {
+      triggerSmartMoodShuffle(activeTrackRef.current);
+      return;
+    }
+    handleSeek(0);
+  }, [
+    handleSeek,
+    loadAndPlayRealTrack,
+    refreshExternalOsMedia,
+    sendExternalMediaCommand,
+    triggerSmartMoodShuffle,
+  ]);
+
+  // Previous Track button (<<):
+  // - External App (Spotify / YouTube Music / OS Media): sends 'prev' directly to external app
+  // - Internal AI Player: returns to previous song in history (or rewinds to 0:00 if no history)
+  const handlePrevTrack = useCallback(() => {
+    if (activeTrackRef.current?.sourceType === 'external') {
+      sendExternalMediaCommand('prev');
+      positionMsRef.current = 0;
+      setPositionMs(0);
+      window.setTimeout(() => refreshExternalOsMedia(), 650);
+      return;
+    }
+
+    if (musicHistoryRef.current.length > 0 && (positionMsRef.current < 5000 || moodShuffleEnabledRef.current)) {
+      const [prevTrack, ...restHistory] = musicHistoryRef.current;
+      setMusicHistory(restHistory);
+      if (activeTrackRef.current) {
+        setMusicQueue((q) => [activeTrackRef.current!, ...q]);
+      }
+      loadAndPlayRealTrack({ ...prevTrack, sourceType: 'internal' });
+      return;
+    }
+    handleSeek(0);
+  }, [handleSeek, loadAndPlayRealTrack, refreshExternalOsMedia, sendExternalMediaCommand]);
+
+  // Handle local audio file (.mp3, .wav, .flac, .m4a) + automatic LRCLIB lyrics fetch
+  const handleLocalAudioFile = useCallback(
+    async (file: File) => {
+      const objectUrl = URL.createObjectURL(file);
+      const rawName = file.name.replace(/\.[^/.]+$/, '').replace(/[_]+/g, ' ').trim();
+      const parts = rawName.split(' - ');
+      const artistGuess = parts.length > 1 ? parts[0].trim() : '';
+      const titleGuess = parts.length > 1 ? parts.slice(1).join(' - ').trim() : rawName;
+
+      loadAndPlayRealTrack({
+        title: titleGuess || rawName,
+        artist: artistGuess || 'Local Audio',
+        audioUrl: objectUrl,
+        durationMs: 180000,
+        lrc: '',
+        sourceType: 'internal',
+      });
+
+      // Automatically fetch synced lyrics from multi-provider chain
+      try {
+        const params = new URLSearchParams({
+          track_name: titleGuess,
+          artist_name: artistGuess,
+          q: rawName,
+        });
+        const res = await fetch(`/api/music/lyrics?${params.toString()}`);
+        const data = await res.json();
+        if (data?.lrc) {
+          setActiveTrack((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  title: data.title || prev.title,
+                  artist: data.artist || prev.artist,
+                  lrc: data.lrc,
+                  syncType: data.syncType,
+                  provider: data.provider,
+                  wordsByLine: data.wordsByLine,
+                  lrclibId: data.lrclibId,
+                }
+              : prev
+          );
+        }
+      } catch {
+        // ignore
+      }
+    },
+    [loadAndPlayRealTrack]
+  );
+
+  // Sync HTMLAudioElement volume with Dynamic Island volume & mute state
+  useEffect(() => {
+    if (audioElRef.current) {
+      audioElRef.current.volume = muted ? 0 : Math.min(1, Math.max(0, volume / 100));
+    }
+  }, [volume, muted]);
+
+  // High-precision 60ms real-time playback & lyrics sync clock (works seamlessly for HTML5 Audio, FLAC, YouTube & OS Media)
+  useEffect(() => {
+    if (!isPlaying || !activeTrack) return;
+
+    let lastWallMs = performance.now();
+    const interval = window.setInterval(() => {
+      const nowWallMs = performance.now();
+      const dtMs = Math.min(250, Math.max(0, Math.round(nowWallMs - lastWallMs)));
+      lastWallMs = nowWallMs;
+
+      // 1. If HTML5 <audio> is actively playing a local blob or HTTP FLAC stream, read its exact hardware currentTime
+      const audioEl = audioElRef.current;
+      if (audioEl && activeTrack.audioUrl && !audioEl.paused && audioEl.currentTime > 0) {
+        const nextPos = Math.round(audioEl.currentTime * 1000);
+        positionMsRef.current = nextPos;
+        setPositionMs(nextPos);
+        return;
+      }
+
+      // 2. If backed by YouTube stream, only pause advancement if YouTube explicitly reports paused (2) or buffering (3),
+      //    or during the initial 750ms iframe warmup when ytPlayerStateRef is still -1
+      if (activeTrack.youtubeVideoId && activeTrack.sourceType !== 'external') {
+        if (ytPlayerStateRef.current === 2 || ytPlayerStateRef.current === 3) {
+          return;
+        }
+        if (
+          ytPlayerStateRef.current === -1 &&
+          Date.now() - lastPlayedSongTimeRef.current < 750
+        ) {
+          return;
+        }
+      }
+
+      // 3. Advance positionMs smoothly using real wall-clock delta
+      setPositionMs((prev) => {
+        const dur =
+          activeTrack.durationMs && activeTrack.durationMs > 5000
+            ? activeTrack.durationMs
+            : 210000;
+        if (prev + dtMs >= dur) {
+          if (activeTrack.sourceType !== 'external') {
+            window.setTimeout(() => handleTrackEndedRef.current(), 0);
+          } else {
+            window.setTimeout(() => refreshExternalOsMedia(), 300);
+          }
+          positionMsRef.current = 0;
+          return 0;
+        }
+        const nextVal = prev + dtMs;
+        positionMsRef.current = nextVal;
+        return nextVal;
+      });
+    }, 60);
+
+    return () => window.clearInterval(interval);
+  }, [isPlaying, activeTrack, refreshExternalOsMedia]);
+
+  const formatTrackTime = (ms: number, remaining = false) => {
+    const sec = Math.max(0, Math.floor(ms / 1000));
+    const m = String(Math.floor(sec / 60)).padStart(2, '0');
+    const s = String(sec % 60).padStart(2, '0');
+    return `${remaining ? '-' : ''}${m}:${s}`;
+  };
+
+  // ── Page 2: Real Notifications & Do Not Disturb State (Persisted, Zero Fake Placeholders) ──
+  const [dndEnabled, setDndEnabled] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
+    try {
+      const saved = window.localStorage.getItem('isle_notifications_v2');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  });
+  const [newNotifInput, setNewNotifInput] = useState('');
+  const [replyingNotifId, setReplyingNotifId] = useState<number | null>(null);
+  const [replyNotifText, setReplyNotifText] = useState('');
+  const [browserNotifPerm, setBrowserNotifPerm] = useState<string>(() =>
+    typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'unsupported'
   );
 
   useEffect(() => {
-    if (!pomoRunning) return;
-    const id = setInterval(() => {
-      setPomoRemainingMs((prev) => {
-        if (prev <= 1000) {
-          const nextPhase =
-            pomoPhase === Phase.Focus ? Phase.ShortBreak : Phase.Focus;
-          const nextDur =
-            (nextPhase === Phase.Focus
-              ? pomoConfig.focusMinutes
-              : pomoConfig.shortBreakMinutes) * 60_000;
-          setPomoPhase(nextPhase);
-          setPomoDurationMs(nextDur);
-          return nextDur;
-        }
-        return prev - 1000;
-      });
-    }, 1000);
-    return () => clearInterval(id);
-  }, [pomoRunning, pomoPhase, pomoConfig]);
+    try {
+      window.localStorage.setItem('isle_notifications_v2', JSON.stringify(notifications.slice(0, 30)));
+    } catch {
+      // ignore
+    }
+  }, [notifications]);
 
-  // ── Reminders State ──
-  const [reminders, setReminders] = useState<ReminderItem[]>([
-    { id: 1, title: 'Review zbus D-Bus interface signatures for isled 1.4' },
-    { id: 2, title: 'Test Vulkan shader compilation on Intel Arc GPU' },
-    { id: 3, title: 'Send release notes for GNOME Shell 50 & 51 support' },
-  ]);
-  const [newReminderText, setNewReminderText] = useState('');
-  const [editingReminderId, setEditingReminderId] = useState<number | null>(null);
-  const [editingReminderText, setEditingReminderText] = useState('');
-
-  const toggleReminder = (id: number) => {
-    setReminders((prev) =>
-      prev.map((r) =>
-        r.id === id ? { ...r, doneAt: r.doneAt ? undefined : Date.now() } : r
-      )
-    );
-    setTimeout(() => {
-      setReminders((prev) =>
-        prev.filter((r) => !(r.id === id && r.doneAt && Date.now() - r.doneAt >= 850))
-      );
-    }, 900);
-  };
-
-  // ── Shelf (Clipboard + Files Tray) State ──
-  const [shelfTab, setShelfTab] = useState<'clipboard' | 'files'>('clipboard');
-  const [clipFilter, setClipFilter] = useState<'all' | 'text' | 'link' | 'image' | 'file'>('all');
-  const [clipSearchOpen, setClipSearchOpen] = useState(false);
-  const [clipSearch, setClipSearch] = useState('');
-  const [copiedClipId, setCopiedClipId] = useState<number | null>(null);
-  const [clips, setClips] = useState<ClipItem[]>([
-    {
-      id: 1,
-      kind: 'code',
-      content: 'systemctl --user status isled\njournalctl --user -u isled -f',
-      app: 'Terminal',
-      age: '2m',
-      pinned: true,
-    },
-    {
-      id: 2,
-      kind: 'link',
-      content: 'https://github.com/zickrian/isle/releases/tag/v1.4.0',
-      subtitle: 'github.com',
-      app: 'Firefox',
-      age: '14m',
-      pinned: true,
-    },
-    {
-      id: 3,
-      kind: 'text',
-      content: 'Size uses one spring for growing and shrinking: stiffness 155, damping 18.',
-      app: 'Text Editor',
-      age: '28m',
-      pinned: false,
-    },
-    {
-      id: 4,
-      kind: 'image',
-      content: 'wayland-notch-screenshot.png',
-      subtitle: '1920 × 1080 · 312 KB',
-      app: 'Screenshot',
-      age: '1h',
-      pinned: false,
-      gradient: 'linear-gradient(135deg, #312e81 0%, #0284c7 50%, #10b981 100%)',
-    },
-  ]);
-
-  const [shelfFiles, setShelfFiles] = useState<ShelfFileItem[]>([
-    {
-      id: 101,
-      name: 'product-spec.pdf',
-      kind: 'pdf',
-      size: '420 KB',
-      accentRgb: [1, 0.27, 0.23],
-      previewGradient: 'linear-gradient(135deg, #7f1d1d, #ef4444)',
-    },
-    {
-      id: 102,
-      name: 'clouds-wallpaper.png',
-      kind: 'image',
-      size: '2.4 MB',
-      accentRgb: [0.18, 0.78, 0.68],
-      previewGradient: 'linear-gradient(135deg, #0f766e, #38bdf8)',
-    },
-    {
-      id: 103,
-      name: 'isle-1.4.0-x86_64.tar.gz',
-      kind: 'archive',
-      size: '7.5 MB',
-      accentRgb: [1, 0.62, 0.04],
-      previewGradient: 'linear-gradient(135deg, #78350f, #f59e0b)',
-    },
-  ]);
-  const [copiedFileId, setCopiedFileId] = useState<number | null>(null);
-  const [shelfCornerGlow, setShelfCornerGlow] = useState<[number, number, number] | null>(null);
-  const [isDraggingOverShelf, setIsDraggingOverShelf] = useState(false);
-
-  // ── Notifications State ──
-  const [notifications, setNotifications] = useState<NotificationItem[]>([
-    {
-      id: 1,
-      app: 'GitHub',
-      title: 'zickrian/isle · Pull Request #48',
-      body: 'feat(whisper): offload ggml-vulkan matrix multiplication on AMD RDNA3',
-      time: '3m ago',
-      seen: false,
-      actions: ['Reply', 'Mark as read'],
-    },
-    {
-      id: 2,
-      app: 'Telegram',
-      title: 'Aris Pratama',
-      body: 'Joined the design sync call — link is in the calendar invite!',
-      time: '18m ago',
-      seen: false,
-      actions: ['Reply', 'Mark as read'],
-    },
-    {
-      id: 3,
-      app: 'System',
-      title: 'Battery Charge Limit Active',
-      body: 'Charging stops at 80% as configured by Isle Assistant.',
-      time: '1h ago',
-      seen: true,
-      actions: ['Keep at 80%'],
-    },
-  ]);
-
-  const unseenCount = useMemo(
-    () => notifications.filter((n) => !n.seen).length,
+  const unreadNotifCount = useMemo(
+    () => notifications.filter((n) => n.unread).length,
     [notifications]
   );
 
-  // ── Calendar & World Clocks State ──
-  const todayIso = useMemo(() => {
-    const y = nowDate.getFullYear();
-    const m = (nowDate.getMonth() + 1).toString().padStart(2, '0');
-    const d = nowDate.getDate().toString().padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }, [nowDate]);
+  const pushRealNotification = useCallback(
+    (title: string, subtitle: string, iconType: 'calendar' | 'download' | 'message' = 'message') => {
+      const cleanTitle = title.trim().slice(0, 80);
+      const cleanSub = subtitle.trim().slice(0, 140);
+      if (!cleanTitle) return;
 
-  const [selectedDateIso, setSelectedDateIso] = useState(todayIso);
-  const [calInput, setCalInput] = useState('');
-  const [showWorldClocksDetail, setShowWorldClocksDetail] = useState(false);
-  const [events, setEvents] = useState<CalendarEvent[]>(() => [
-    {
-      id: 1,
-      title: 'GNOME Shell Extension Architecture Sync',
-      date: todayIso,
-      start: '14:00',
-      end: '14:45',
-      source: 'desktop',
-      meetingUrl: 'https://meet.google.com/isle-gnome-sync',
-      meetingProvider: 'Google Meet',
-    },
-    {
-      id: 2,
-      title: 'Release v1.4.0 Package Signing',
-      date: todayIso,
-      start: '17:30',
-      end: '18:00',
-      source: 'isle',
-    },
-    {
-      id: 3,
-      title: 'Dinner with Sara',
-      date: todayIso,
-      start: '20:00',
-      source: 'isle',
-    },
-  ]);
+      const now = new Date();
+      const stamp = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-  // ── AI Usage State ──
-  const [usageProviderIdx, setUsageProviderIdx] = useState(0);
-  const usageProviders = [
-    {
-      id: 'claude',
-      name: 'Claude',
-      plan: 'Max 5x',
-      color: '#d97757',
-      updated: 'Updated just now',
-      limits: [
-        { label: '5-hour window', reset: 'Resets in 2h 14m', percent: 42 },
-        { label: 'Weekly limit', reset: 'Resets Thu 09:00', percent: 68 },
-      ],
-    },
-    {
-      id: 'chatgpt',
-      name: 'ChatGPT',
-      plan: 'Plus · Codex',
-      color: '#10a37f',
-      updated: 'Updated 1m ago',
-      limits: [
-        { label: '5-hour window', reset: 'Resets in 3h 40m', percent: 24 },
-        { label: 'Weekly limit', reset: 'Resets Sun 00:00', percent: 51 },
-      ],
-    },
-  ];
+      setNotifications((prev) => [
+        {
+          id: Date.now() + Math.floor(Math.random() * 1000),
+          iconType,
+          title: cleanTitle,
+          subtitle: cleanSub || 'Isle System Notification',
+          timeAgo: stamp,
+          unread: true,
+        },
+        ...prev.slice(0, 24),
+      ]);
 
-  // ── Bot & Voice Assistant State ──
-  const [botShape, setBotShape] = useState<BotShapeName>('squircle');
-  const [botColor, setBotColor] = useState<BotColorName>('cloud');
-  const [botGlowMode, setBotGlowMode] = useState<'match' | 'classic'>('match');
-  const [botForm, setBotForm] = useState<BotForm>('listening');
-  const [botGesture, setBotGesture] = useState<{
-    type: 'nod' | 'shake' | 'hop';
-    id: number;
-  } | null>(null);
-  const [voiceInputMode, setVoiceInputMode] = useState<'listening' | 'typing'>('listening');
-  const [voiceQuery, setVoiceQuery] = useState('');
-  const [voiceLevel, setVoiceLevel] = useState(0);
-  const [chatExpanded, setChatExpanded] = useState(false);
-  const [chatHistory, setChatHistory] = useState<ChatTurn[]>([
-    {
-      id: 1,
-      userText: 'Install htop and check how much RAM is free',
-      steps: [
-        'Checked /etc/os-release (Ubuntu 24.04 LTS)',
-        'Checked which htop → not installed',
-        'Read free -h → 11.4 GiB available of 16.0 GiB',
-      ],
-      commandCard: {
-        purpose: 'Install htop interactive process viewer',
-        command: 'sudo apt install -y htop',
-        riskLabel: 'Needs your password',
-        riskLevel: 'amber',
-        status: 'done',
-        durationText: '4.2s',
-      },
-      replyText:
-        'htop 3.3.0 is installed and ready. You have 11.4 GiB of available memory (28% used).',
-      timestamp: '19:30',
+      if (!dndEnabled && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        try {
+          new Notification(cleanTitle, { body: cleanSub });
+        } catch {
+          // ignore
+        }
+      }
     },
-  ]);
+    [dndEnabled]
+  );
 
-  const activeTurn = chatHistory[chatHistory.length - 1];
+  // ── Page 3: Focus / Pomodoro State ──
+  const [pomoMode, setPomoMode] = useState<'focus' | 'break'>('focus');
+  const [pomoTotalSeconds, setPomoTotalSeconds] = useState(25 * 60);
+  const [pomoRemainingSeconds, setPomoRemainingSeconds] = useState(25 * 60);
+  const [pomoRunning, setPomoRunning] = useState(false);
+  const [pomoSessionsCompleted, setPomoSessionsCompleted] = useState<number>(() => {
+    try {
+      const saved = window.localStorage.getItem('isle_pomo_sessions_v2');
+      return saved ? Math.max(0, parseInt(saved, 10) || 0) : 0;
+    } catch {
+      return 0;
+    }
+  });
 
-  // Simulate gentle voice modulation when listening in voice assistant
   useEffect(() => {
-    if (!voiceOpen || voiceInputMode !== 'listening' || botForm !== 'listening') {
-      setVoiceLevel(0);
+    try {
+      window.localStorage.setItem('isle_pomo_sessions_v2', String(pomoSessionsCompleted));
+    } catch {
+      // ignore
+    }
+  }, [pomoSessionsCompleted]);
+
+  useEffect(() => {
+    if (!pomoRunning) return;
+    const t = setInterval(() => {
+      setPomoRemainingSeconds((prev) => {
+        if (prev <= 1) {
+          setPomoRunning(false);
+          if (pomoMode === 'focus') {
+            setPomoSessionsCompleted((s) => s + 1);
+            pushRealNotification('Focus Session Selesai!', 'Waktu fokus selesai — saatnya istirahat sejenak.', 'calendar');
+          } else {
+            pushRealNotification('Waktu Break Selesai!', 'Siap kembali lanjut fokus?', 'calendar');
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [pomoRunning, pomoMode, pushRealNotification]);
+
+  const formatPomoTime = (sec: number) => {
+    const m = String(Math.floor(sec / 60)).padStart(2, '0');
+    const s = String(sec % 60).padStart(2, '0');
+    return `${m}:${s}`;
+  };
+
+  // ── Page 4: Real Tasks / ToDoList State (Persisted, Zero Fake Placeholders) ──
+  const [tasks, setTasks] = useState<ToDoItem[]>(() => {
+    try {
+      const saved = window.localStorage.getItem('isle_tasks_v2');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  });
+  const [addingTask, setAddingTask] = useState(false);
+  const [newTaskInput, setNewTaskInput] = useState('');
+  const [newTaskTime, setNewTaskTime] = useState<string>(() => {
+    const d = new Date(Date.now() + 30 * 60 * 1000);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  });
+  const [editingTaskTimeId, setEditingTaskTimeId] = useState<number | null>(null);
+  const completedCount = useMemo(() => tasks.filter((t) => t.done).length, [tasks]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('isle_tasks_v2', JSON.stringify(tasks.slice(0, 40)));
+    } catch {
+      // ignore
+    }
+  }, [tasks]);
+
+  // ── Page 6: Real Calendar State (Synced to Live System Clock & Persisted in localStorage) ──
+  const [calYear, setCalYear] = useState(() => new Date().getFullYear());
+  const [calMonth, setCalMonth] = useState(() => new Date().getMonth());
+  const [selectedDay, setSelectedDay] = useState(() => new Date().getDate());
+  const [newEventInput, setNewEventInput] = useState('');
+  const [showWorldClocks, setShowWorldClocks] = useState(false);
+  const [eventsByDate, setEventsByDate] = useState<Record<string, CalendarEventItem[]>>(() => {
+    try {
+      const saved = window.localStorage.getItem('isle_calendar_events_v2');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return {};
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('isle_calendar_events_v2', JSON.stringify(eventsByDate));
+    } catch {
+      // ignore
+    }
+  }, [eventsByDate]);
+
+  const calendarCells = useMemo(() => {
+    const firstDayOfWeek = new Date(calYear, calMonth, 1).getDay();
+    const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+    const cells: (number | null)[] = [];
+    for (let i = 0; i < firstDayOfWeek; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+    return cells;
+  }, [calYear, calMonth]);
+
+  const currentDateKey = `${calYear}-${calMonth}-${selectedDay}`;
+  const selectedDayEvents = eventsByDate[currentDateKey] || [];
+
+  const handleAddCalendarEvent = useCallback(
+    (rawText: string) => {
+      const trimmed = rawText.trim().slice(0, 100);
+      if (!trimmed) return;
+      const match = trimmed.match(/^(.*?)\s+(\d{1,2}[:.]\d{2})$/);
+      const title = match ? match[1].trim() : trimmed;
+      const time = match ? match[2].replace('.', ':') : timeStr;
+
+      setEventsByDate((prev) => {
+        const existing = prev[currentDateKey] || [];
+        if (existing.length >= 25) return prev; // Chaos cap
+        return {
+          ...prev,
+          [currentDateKey]: [
+            ...existing,
+            { id: Date.now() + Math.floor(Math.random() * 1000), title, time, color: '#ff9f0a' },
+          ],
+        };
+      });
+      pushRealNotification(
+        `Jadwal: ${title}`,
+        `${selectedDay} ${SHORT_MONTHS[calMonth]} ${calYear} · ${time}`,
+        'calendar'
+      );
+      setNewEventInput('');
+    },
+    [calMonth, calYear, currentDateKey, pushRealNotification, selectedDay, timeStr]
+  );
+
+  // ── Smart Alarms (Persisted in localStorage & triggered via Island notch) ──
+  const [smartAlarms, setSmartAlarms] = useState<SmartAlarm[]>(() => {
+    try {
+      const saved = window.localStorage.getItem('isle_smart_alarms');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // ignore
+    }
+    return [
+      {
+        id: 'alarm-default-1',
+        time: '09:00',
+        title: 'Morning Standup',
+        enabled: true,
+        createdAt: Date.now(),
+      },
+    ];
+  });
+
+  const [calendarSubTab, setCalendarSubTab] = useState<'events' | 'alarms'>('events');
+  const [newAlarmTime, setNewAlarmTime] = useState('09:30');
+  const [newAlarmTitle, setNewAlarmTitle] = useState('');
+  const lastTriggeredMinuteRef = useRef<string>('');
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('isle_smart_alarms', JSON.stringify(smartAlarms));
+    } catch {
+      // ignore
+    }
+  }, [smartAlarms]);
+
+  // Tick checker: Trigger Dynamic Island Reminder Alert when an enabled Smart Alarm OR a scheduled Task matches HH:mm
+  useEffect(() => {
+    if (!timeStr) return;
+    const currentMinKey = `${nowDate.toDateString()}-${timeStr}`;
+    if (lastTriggeredMinuteRef.current === currentMinKey) return;
+
+    const matchedAlarm = smartAlarms.find((a) => a.enabled && a.time === timeStr);
+    if (matchedAlarm) {
+      lastTriggeredMinuteRef.current = currentMinKey;
+      triggerAlert('alarm', {
+        alarmId: matchedAlarm.id,
+        alarmTitle: matchedAlarm.title,
+        alarmTime: matchedAlarm.time,
+      });
+      pushRealNotification(
+        `Alarm: ${matchedAlarm.title}`,
+        `Waktu alarm tercapai pukul ${matchedAlarm.time}`,
+        'calendar'
+      );
+      return;
+    }
+
+    const matchedTask = tasks.find((t) => !t.done && t.time && t.time === timeStr);
+    if (matchedTask) {
+      lastTriggeredMinuteRef.current = currentMinKey;
+      triggerAlert('alarm', {
+        alarmId: `task-${matchedTask.id}`,
+        alarmTitle: `Task: ${matchedTask.title}`,
+        alarmTime: matchedTask.time,
+      });
+      pushRealNotification(
+        `Pengingat Task: ${matchedTask.title}`,
+        `Jadwal task pukul ${matchedTask.time} telah tiba`,
+        'calendar'
+      );
+    }
+  }, [timeStr, smartAlarms, tasks, nowDate, triggerAlert, pushRealNotification]);
+
+  const handleToggleAlarm = useCallback((id: string) => {
+    setSmartAlarms((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, enabled: !a.enabled } : a))
+    );
+  }, []);
+
+  const handleDeleteAlarm = useCallback((id: string) => {
+    setSmartAlarms((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
+  const handleAddSmartAlarm = useCallback(
+    (time: string, rawTitle: string) => {
+      const cleanTitle = rawTitle.trim() || `Alarm ${time}`;
+      const newAlarm: SmartAlarm = {
+        id: `alarm-${Date.now()}`,
+        time: time || '09:00',
+        title: cleanTitle,
+        enabled: true,
+        createdAt: Date.now(),
+      };
+      setSmartAlarms((prev) => [newAlarm, ...prev.slice(0, 19)]);
+      setNewAlarmTitle('');
+      pushRealNotification('Smart Alarm Dibuat', `${cleanTitle} pada ${time}`, 'calendar');
+    },
+    [pushRealNotification]
+  );
+
+  const handleSnoozeAlarm = useCallback(
+    (alarmId?: string) => {
+      setActiveAlert(null);
+      const snoozeDate = new Date(Date.now() + 5 * 60 * 1000);
+      const shh = String(snoozeDate.getHours()).padStart(2, '0');
+      const smm = String(snoozeDate.getMinutes()).padStart(2, '0');
+      const snoozeTime = `${shh}:${smm}`;
+
+      if (alarmId && alarmId.startsWith('task-')) {
+        const taskIdNum = parseInt(alarmId.replace('task-', ''), 10);
+        setTasks((prev) =>
+          prev.map((t) => (t.id === taskIdNum ? { ...t, time: snoozeTime } : t))
+        );
+      } else if (alarmId) {
+        setSmartAlarms((prev) =>
+          prev.map((a) => (a.id === alarmId ? { ...a, time: snoozeTime, enabled: true } : a))
+        );
+      }
+      pushRealNotification(
+        'Pengingat Ditunda 5 Menit',
+        `Akan muncul kembali di Dynamic Island pukul ${snoozeTime}`,
+        'calendar'
+      );
+    },
+    [pushRealNotification]
+  );
+
+  // ── Unified Command Executor for Voice & Chat AI (Smart Alarms, Reminders, Volume, Brightness, Music) ──
+  const executeIslandCommand = useCallback(
+    (raw: string): { handled: boolean; reply?: string } => {
+      const p = raw.trim().toLowerCase();
+      if (!p) return { handled: false };
+
+      const INDO_NUMS: Record<string, number> = {
+        satu: 1, se: 1, dua: 2, tiga: 3, empat: 4, lima: 5, enam: 6,
+        tujuh: 7, delapan: 8, sembilan: 9, sepuluh: 10, sebelas: 11,
+        duabelas: 12, limabelas: 15, duapuluh: 20, tigapuluh: 30, setengah: 0.5,
+      };
+
+      const parseNum = (str: string): number => {
+        const clean = str.trim().toLowerCase();
+        if (INDO_NUMS[clean] !== undefined) return INDO_NUMS[clean];
+        const n = parseFloat(clean);
+        return Number.isFinite(n) ? n : 1;
+      };
+
+      // 1. Reminder & Smart Alarm System ("dalam satu menit ingetin aku manasin motor", etc.)
+      const relMatch1 = raw.match(
+        /(?:dalam|setelah)?\s*(satu|se|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|\d+)\s*(menit|jam)\s*(?:lagi)?\s*(?:ingetin|ingatkan|remind me to|remind me|alarm|pengingat)?\s*(?:aku|saya)?\s*(.*)/i
+      );
+      const relMatch2 = raw.match(
+        /(?:ingetin|ingatkan|remind me to|remind me|buatkan pengingat|pasang alarm|alarm)\s*(?:aku|saya)?\s*(.*?)\s*(?:dalam|setelah)\s*(satu|se|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|\d+)\s*(menit|jam)/i
+      );
+      const relMatch3 = raw.match(
+        /(?:ingetin|ingatkan|remind me)\s*(?:aku|saya)?\s*(satu|se|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|\d+)\s*(menit|jam)\s*(?:lagi)?\s*(?:untuk|buat)?\s*(.*)/i
+      );
+
+      let minutesToAdd: number | null = null;
+      let extractedTitle = '';
+
+      if (relMatch1 && (p.includes('inget') || p.includes('alarm') || p.includes('remind') || p.includes('pengingat'))) {
+        const numVal = parseNum(relMatch1[1]);
+        const unit = relMatch1[2].toLowerCase();
+        minutesToAdd = unit === 'jam' ? numVal * 60 : numVal;
+        extractedTitle = relMatch1[3]?.trim() || '';
+      } else if (relMatch2) {
+        const numVal = parseNum(relMatch2[3]);
+        const unit = relMatch2[4].toLowerCase();
+        minutesToAdd = unit === 'jam' ? numVal * 60 : numVal;
+        extractedTitle = relMatch2[1]?.trim() || '';
+      } else if (relMatch3) {
+        const numVal = parseNum(relMatch3[1]);
+        const unit = relMatch3[2].toLowerCase();
+        minutesToAdd = unit === 'jam' ? numVal * 60 : numVal;
+        extractedTitle = relMatch3[3]?.trim() || '';
+      }
+
+      // Absolute time matching: "ingatkan jam 18:30 meeting", "alarm pukul 07:00 lari"
+      const absMatch = raw.match(/(?:ingetin|ingatkan|remind me|alarm|pasang alarm)\s*(?:aku|saya)?\s*(?:jam|pukul)?\s*(\d{1,2}[:.]\d{2})\s*(?:buat|untuk)?\s*(.*)/i);
+      let targetTimeStr = '';
+
+      if (minutesToAdd !== null && minutesToAdd > 0) {
+        const targetDate = new Date(Date.now() + Math.round(minutesToAdd * 60 * 1000));
+        const th = String(targetDate.getHours()).padStart(2, '0');
+        const tm = String(targetDate.getMinutes()).padStart(2, '0');
+        targetTimeStr = `${th}:${tm}`;
+      } else if (absMatch) {
+        targetTimeStr = absMatch[1].replace('.', ':');
+        if (targetTimeStr.length === 4 && targetTimeStr[1] === ':') {
+          targetTimeStr = '0' + targetTimeStr;
+        }
+        extractedTitle = absMatch[2]?.trim() || '';
+      }
+
+      if (targetTimeStr) {
+        let cleanTitle = extractedTitle
+          .replace(/^(?:untuk|buat|tentang|soal)\s+/i, '')
+          .replace(/\b(?:dalam|setelah|lagi|ingetin|ingatkan|aku|saya)\b/gi, '')
+          .trim();
+        if (!cleanTitle) cleanTitle = 'Pengingat';
+
+        // Add to Smart Alarms
+        const newAlarm: SmartAlarm = {
+          id: `alarm-${Date.now()}`,
+          time: targetTimeStr,
+          title: cleanTitle,
+          enabled: true,
+          createdAt: Date.now(),
+        };
+        setSmartAlarms((prev) => [newAlarm, ...prev.slice(0, 19)]);
+
+        // Add to Todo List
+        setTasks((prev) => [
+          ...prev.slice(-29),
+          {
+            id: Date.now(),
+            title: `${cleanTitle} (${targetTimeStr})`,
+            time: targetTimeStr,
+            done: false,
+          },
+        ]);
+
+        // Push desktop notification
+        pushRealNotification(
+          '⏰ Smart Alarm & Pengingat Diset',
+          `"${cleanTitle}" diset pukul ${targetTimeStr}`,
+          'calendar'
+        );
+
+        return {
+          handled: true,
+          reply: `Siap! Pengingat "${cleanTitle}" sudah saya pasang pukul ${targetTimeStr} di Smart Alarm dan ToDo.`,
+        };
+      }
+
+      // 2. Brightness controls
+      if (
+        /\b(naikin|tambah|tambahin|tingkatin|lebih terang|terangin|cerahkan)\b.*\b(kecerahan|layar|brightness)\b|\b(kecerahan|layar|brightness)\b.*\b(naik|tambah|up)\b/.test(
+          p
+        )
+      ) {
+        setBrightness((curr) => {
+          const next = Math.min(10, curr + 2);
+          triggerAlert('brightness', { value: next });
+          return next;
+        });
+        return { handled: true, reply: 'Kecerahan layar telah dinaikkan.' };
+      }
+      if (
+        /\b(turunin|kurangi|kurangin|lebih gelap|gelapin|redupkan|turunkan)\b.*\b(kecerahan|layar|brightness)\b|\b(kecerahan|layar|brightness)\b.*\b(turun|kurang|down)\b/.test(
+          p
+        )
+      ) {
+        setBrightness((curr) => {
+          const next = Math.max(1, curr - 2);
+          triggerAlert('brightness', { value: next });
+          return next;
+        });
+        return { handled: true, reply: 'Kecerahan layar telah diturunkan.' };
+      }
+      const briNumMatch = p.match(/\b(?:brightness|kecerahan)\b.*?(\d{1,3})/);
+      if (briNumMatch) {
+        const rawNum = parseInt(briNumMatch[1], 10);
+        const val = Math.min(10, Math.max(1, rawNum > 10 ? Math.round(rawNum / 10) : rawNum));
+        setBrightness(val);
+        triggerAlert('brightness', { value: val });
+        return { handled: true, reply: `Kecerahan diatur ke tingkat ${val}.` };
+      }
+
+      // 3. Volume controls
+      if (
+        /\b(naikin|gedein|tambah|tambahin|kerasin|perbesar|tinggikan)\b.*\b(volume|suara)\b|\b(volume|suara)\b.*\b(naik|up|tambah)\b/.test(
+          p
+        )
+      ) {
+        setMuted(false);
+        setVolume((curr) => {
+          const next = Math.min(100, curr + 15);
+          triggerAlert('volume', { value: next });
+          return next;
+        });
+        return { handled: true, reply: 'Volume dinaikkan.' };
+      }
+      if (
+        /\b(turunin|kecilin|kurangi|kurangin|pelanin|rendahkan|kecilkan)\b.*\b(volume|suara)\b|\b(volume|suara)\b.*\b(turun|down|kecil)\b/.test(
+          p
+        )
+      ) {
+        setVolume((curr) => {
+          const next = Math.max(0, curr - 15);
+          triggerAlert('volume', { value: next });
+          return next;
+        });
+        return { handled: true, reply: 'Volume diturunkan.' };
+      }
+      if (/\b(mute|bisukan|senyapkan|matikan suara)\b/.test(p)) {
+        setMuted(true);
+        triggerAlert('mute', { muted: true });
+        return { handled: true, reply: 'Volume dibisukan (Muted).' };
+      }
+      if (/\b(unmute|bunyikan|nyalakan suara|suara on)\b/.test(p)) {
+        setMuted(false);
+        triggerAlert('volume', { value: volume });
+        return { handled: true, reply: 'Suara dinyalakan kembali.' };
+      }
+      const volNumMatch = p.match(/\bvolume\b.*?(\d{1,3})/);
+      if (volNumMatch) {
+        const v = Math.min(100, Math.max(0, parseInt(volNumMatch[1], 10)));
+        setMuted(v === 0);
+        setVolume(v);
+        triggerAlert('volume', { value: v });
+        return { handled: true, reply: `Volume diatur ke ${v}%.` };
+      }
+
+      // 4. Music controls (Queue, Mood Shuffle, Play, Pause, Skip)
+      const queueSongMatch =
+        raw.match(
+          /\b(?:setelah ini|habis ini|habis lagu ini|abis ini|abis lagu ini|selanjutnya|nanti)\s+(?:tolong\s+)?(?:putar lagu|stel lagu|setel musik|setel lagu|mainkan lagu|putar musik|setel|putar|play|stel)\s+(.+)/i
+        ) ||
+        raw.match(
+          /\b(?:masukin ke antrian|masukkan ke antrian|tambah ke antrian|tambahin ke antrian|antriin lagu|antrikan lagu|antri lagu|add to queue|queue song|queue track|play next)\s+(?:lagu\s+)?(.+)/i
+        );
+      if (queueSongMatch && queueSongMatch[1]) {
+        const songQuery = queueSongMatch[1].trim();
+        const willPlayNow = !activeTrackRef.current;
+        handleQueueSongMedia(songQuery);
+        navigateToPage(0);
+        return {
+          handled: true,
+          reply: willPlayNow
+            ? `Karena belum ada lagu yang diputar, langsung memutar "${songQuery}" sekarang.`
+            : `Siap! Lagu "${songQuery}" sudah dimasukkan ke antrian dan akan otomatis diputar setelah lagu ini selesai.`,
+        };
+      }
+
+      if (/\b(hapus antrian|kosongkan antrian|bersihkan antrian|clear queue)\b/i.test(p)) {
+        setMusicQueue([]);
+        return { handled: true, reply: 'Antrian lagu telah dikosongkan.' };
+      }
+
+      if (
+        /\b(matiin|matikan|nonaktifkan|stop|turn off|disable)\b.*\b(shuffle|auto\s*play|mood)\b|\bshuffle\b.*\b(mati|off)\b/i.test(
+          p
+        )
+      ) {
+        if (activeTrackRef.current?.sourceType === 'external') {
+          setExternalShuffleEnabled(false);
+          sendExternalMediaCommand('shuffle', false);
+          return {
+            handled: true,
+            reply: `Shuffle pada ${activeTrackRef.current.externalApp || 'aplikasi musik eksternal'} telah dinonaktifkan.`,
+          };
+        }
+        setMoodShuffleEnabled(false);
+        return {
+          handled: true,
+          reply: 'Fitur Mood Shuffle internal telah dinonaktifkan.',
+        };
+      }
+
+      if (
+        /\b(nyalain|nyalakan|aktifkan|hidupkan|mulai|turn on|enable)\b.*\b(shuffle|mood)\b|\b(shuffle lagu|shuffle musik|shuffle mood|mood shuffle|shuffle sesuai mood|acak lagu sesuai mood|shuffle on)\b/i.test(
+          p
+        )
+      ) {
+        if (activeTrackRef.current?.sourceType === 'external') {
+          setExternalShuffleEnabled(true);
+          sendExternalMediaCommand('shuffle', true);
+          return {
+            handled: true,
+            reply: `Shuffle pada ${activeTrackRef.current.externalApp || 'aplikasi musik eksternal'} telah diaktifkan.`,
+          };
+        }
+        setMoodShuffleEnabled(true);
+        navigateToPage(0);
+        if (!activeTrackRef.current) {
+          triggerSmartMoodShuffle(null);
+          return {
+            handled: true,
+            reply: 'Mood Shuffle diaktifkan! Memutar lagu otomatis sesuai mood.',
+          };
+        }
+        return {
+          handled: true,
+          reply: `Mood Shuffle diaktifkan! Setelah "${activeTrackRef.current.title}" selesai, lagu dengan mood serupa akan diputar otomatis.`,
+        };
+      }
+
+      const playSongMatch = raw.match(
+        /\b(?:putar lagu|stel lagu|setel musik|setel lagu|mainkan lagu|play song|play music|putar musik)\s+(.+)/i
+      );
+      if (playSongMatch && playSongMatch[1]) {
+        const songQuery = playSongMatch[1].trim();
+        handleSearchAndPlayMedia(songQuery);
+        navigateToPage(0);
+        return { handled: true, reply: `Mencari dan memutar "${songQuery}" di Dynamic Island.` };
+      }
+      if (/\b(jeda musik|pause musik|stop musik|pause lagu|hentikan musik)\b/.test(p)) {
+        if (isPlaying) handleTogglePlay();
+        return { handled: true, reply: 'Musik dijeda.' };
+      }
+      if (/\b(putar musik|lanjutkan musik|play music|lanjut musik|play lagu)\b/.test(p)) {
+        if (!isPlaying) handleTogglePlay();
+        navigateToPage(0);
+        return { handled: true, reply: 'Musik diputar.' };
+      }
+      if (/\b(skip lagu|lagu selanjutnya|next track|next song)\b/.test(p)) {
+        handleNextTrack();
+        return { handled: true, reply: 'Beralih ke lagu selanjutnya.' };
+      }
+      if (/\b(lagu sebelumnya|prev track|previous track|previous song)\b/.test(p)) {
+        handlePrevTrack();
+        return { handled: true, reply: 'Kembali ke lagu sebelumnya.' };
+      }
+
+      // 5. Connectivity & System
+      if (
+        /\b(matiin|matikan|nonaktifkan|turn off)\b.*\bbluetooth\b|\bbluetooth\b.*\b(mati|off)\b/.test(
+          p
+        )
+      ) {
+        setBluetoothEnabled(false);
+        pushRealNotification(
+          'Bluetooth Dimatikan',
+          'Radio Bluetooth laptop dinonaktifkan.',
+          'message'
+        );
+        return { handled: true, reply: 'Bluetooth dinonaktifkan.' };
+      }
+      if (
+        /\b(nyalain|nyalakan|aktifkan|turn on)\b.*\bbluetooth\b|\bbluetooth\b.*\b(nyala|on)\b/.test(
+          p
+        )
+      ) {
+        setBluetoothEnabled(true);
+        pushRealNotification(
+          'Bluetooth Diaktifkan',
+          'Radio Bluetooth laptop aktif.',
+          'message'
+        );
+        return { handled: true, reply: 'Bluetooth diaktifkan.' };
+      }
+      if (/\b(matiin|matikan|nonaktifkan)\b.*\b(wifi|wi-fi)\b/.test(p)) {
+        setWifiEnabled(false);
+        pushRealNotification('Wi-Fi Dimatikan', 'Adaptor Wi-Fi dinonaktifkan.', 'message');
+        return { handled: true, reply: 'Wi-Fi dinonaktifkan.' };
+      }
+      if (/\b(nyalain|nyalakan|aktifkan)\b.*\b(wifi|wi-fi)\b/.test(p)) {
+        setWifiEnabled(true);
+        pushRealNotification('Wi-Fi Diaktifkan', 'Adaptor Wi-Fi terhubung.', 'message');
+        return { handled: true, reply: 'Wi-Fi diaktifkan.' };
+      }
+
+      // 6. Pomodoro & DND
+      if (/\b(mulai pomodoro|start pomodoro|mulai fokus)\b/.test(p)) {
+        navigateToPage(2);
+        setPomoRunning(true);
+        return { handled: true, reply: 'Timer Pomodoro dimulai.' };
+      }
+      if (/\b(jeda pomodoro|stop pomodoro|pause pomodoro)\b/.test(p)) {
+        setPomoRunning(false);
+        return { handled: true, reply: 'Timer Pomodoro dijeda.' };
+      }
+      if (/\b(jangan ganggu|do not disturb|dnd)\b/.test(p)) {
+        setDndEnabled((d) => !d);
+        return { handled: true, reply: 'Status Jangan Ganggu (DND) diubah.' };
+      }
+
+      return { handled: false };
+    },
+    [
+      handleNextTrack,
+      handlePrevTrack,
+      handleQueueSongMedia,
+      handleSearchAndPlayMedia,
+      handleTogglePlay,
+      isPlaying,
+      navigateToPage,
+      pushRealNotification,
+      sendExternalMediaCommand,
+      triggerAlert,
+      triggerSmartMoodShuffle,
+      volume,
+    ]
+  );
+
+  // ── Voice Assistant (gemini-3.8-live Live API) & Multimodal AI Conversation (gemini-3.8-flash + Vision + Google Search) ──
+  const [voiceListening, setVoiceListening] = useState(false);
+  const [liveConnected, setLiveConnected] = useState(false);
+  const [voiceEnergy, setVoiceEnergy] = useState(0);
+  const [voiceLang, setVoiceLang] = useState<'id-ID' | 'en-US'>('id-ID');
+  const [voiceStatusHint, setVoiceStatusHint] = useState<string | null>(null);
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [botForm, setBotForm] = useState<BotForm>('listening');
+  const [assistantInput, setAssistantInput] = useState('');
+  const [pendingImage, setPendingImage] = useState<PendingImageAttachment | null>(null);
+  const [newChatToast, setNewChatToast] = useState(false);
+  const [spamNotice, setSpamNotice] = useState<string | null>(null);
+  const [showAllChatHistory, setShowAllChatHistory] = useState(false);
+  const [latestSearchSources, setLatestSearchSources] = useState<SearchSourceItem[]>([]);
+  const [animatingMsgId, setAnimatingMsgId] = useState<number | null>(null);
+  const [revealedChars, setRevealedChars] = useState<number>(0);
+
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const lastAskTimeRef = useRef<number>(0);
+  const speechRecRef = useRef<any>(null);
+  const voiceSilenceTimerRef = useRef<number | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const inputAudioCtxRef = useRef<AudioContext | null>(null);
+  const outputAudioCtxRef = useRef<AudioContext | null>(null);
+  const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const liveWsRef = useRef<WebSocket | null>(null);
+  const nextStartTimeRef = useRef<number>(0);
+  const activeAudioNodesRef = useRef<AudioBufferSourceNode[]>([]);
+  const liveInputAccRef = useRef<string>('');
+  const liveOutputAccRef = useRef<string>('');
+  const handleAskGeminiRef = useRef<(promptText: string) => void>(() => {});
+
+  // Real Voice Agent State (No fake transcripts!)
+  const [agentTranscript, setAgentTranscript] = useState('');
+  const [agentHeadline, setAgentHeadline] = useState('');
+
+  // Real Multi-turn Conversation History (Persisted in localStorage, Zero Fake Initial Chat!)
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    try {
+      const saved = window.localStorage.getItem('isle_chat_messages_v2');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  });
+
+  // Latest AI Assistant Message (for clean single-answer display)
+  const latestAssistantMessage = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant') return messages[i];
+    }
+    return null;
+  }, [messages]);
+
+  // Smooth Typewriter / Streaming Text Reveal Effect when AI answers
+  useEffect(() => {
+    if (!animatingMsgId || !latestAssistantMessage || latestAssistantMessage.id !== animatingMsgId) {
+      return;
+    }
+    const fullLen = latestAssistantMessage.text.length;
+    if (revealedChars >= fullLen) {
+      setAnimatingMsgId(null);
+      return;
+    }
+    const step = Math.max(3, Math.ceil(fullLen / 38));
+    const timer = window.setTimeout(() => {
+      setRevealedChars((c) => Math.min(fullLen, c + step));
+    }, 16);
+    return () => window.clearTimeout(timer);
+  }, [animatingMsgId, latestAssistantMessage, revealedChars]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('isle_chat_messages_v2', JSON.stringify(messages.slice(-40)));
+    } catch {
+      // ignore
+    }
+  }, [messages]);
+
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (assistantMode === 'conversation' && chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [messages, assistantLoading, assistantMode, assistantOpen, showAllChatHistory, revealedChars]);
+
+  // Stop Gemini Live WebSocket, 16kHz mic capture, 24kHz audio playback, & Web Speech API cleanly
+  const stopVoiceRecognition = useCallback(() => {
+    if (voiceSilenceTimerRef.current) {
+      window.clearTimeout(voiceSilenceTimerRef.current);
+      voiceSilenceTimerRef.current = null;
+    }
+    if (speechRecRef.current) {
+      try {
+        speechRecRef.current.onresult = null;
+        speechRecRef.current.onerror = null;
+        speechRecRef.current.onend = null;
+        speechRecRef.current.stop();
+      } catch {
+        // ignore
+      }
+      speechRecRef.current = null;
+    }
+    if (liveWsRef.current) {
+      try {
+        liveWsRef.current.onclose = null;
+        liveWsRef.current.close();
+      } catch {
+        // ignore
+      }
+      liveWsRef.current = null;
+    }
+    if (scriptProcessorRef.current) {
+      try {
+        scriptProcessorRef.current.disconnect();
+        scriptProcessorRef.current.onaudioprocess = null;
+      } catch {
+        // ignore
+      }
+      scriptProcessorRef.current = null;
+    }
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach((t) => t.stop());
+      micStreamRef.current = null;
+    }
+    if (inputAudioCtxRef.current) {
+      inputAudioCtxRef.current.close().catch(() => {});
+      inputAudioCtxRef.current = null;
+    }
+    for (const node of activeAudioNodesRef.current) {
+      try {
+        node.stop();
+      } catch {
+        // ignore
+      }
+    }
+    activeAudioNodesRef.current = [];
+    nextStartTimeRef.current = 0;
+    if (outputAudioCtxRef.current) {
+      outputAudioCtxRef.current.close().catch(() => {});
+      outputAudioCtxRef.current = null;
+    }
+    setVoiceListening(false);
+    setLiveConnected(false);
+  }, []);
+
+  // Cleanly close Assistant AND collapse the entire Dynamic Island back to the compact notch
+  const closeAssistantAndCollapse = useCallback(() => {
+    stopVoiceRecognition();
+    setAssistantOpen(false);
+    setIsPinnedOpen(false);
+    setIsHovered(false);
+    setDragAutoOpened(false);
+    setSettingsOpen(false);
+    setShowAllChatHistory(false);
+  }, [stopVoiceRecognition]);
+
+  // Animate voice energy fallback while loading (if real PCM audio stream isn't driving it)
+  useEffect(() => {
+    if (!voiceListening && !assistantLoading) {
+      setVoiceEnergy(0);
       return;
     }
     const id = setInterval(() => {
-      setVoiceLevel(0.15 + Math.random() * 0.45);
-    }, 140);
+      if (!micStreamRef.current) {
+        setVoiceEnergy(0.25 + Math.random() * 0.55);
+      }
+    }, 110);
     return () => clearInterval(id);
-  }, [voiceOpen, voiceInputMode, botForm]);
+  }, [voiceListening, assistantLoading]);
 
-  // ── Peek Alert State ──
-  const [activeAlert, setActiveAlert] = useState<PeekAlert | null>(null);
-  const alertTimeoutRef = useRef<number | null>(null);
-
-  const triggerAlert = (alert: PeekAlert, durationMs = 3600) => {
-    if (alertTimeoutRef.current) window.clearTimeout(alertTimeoutRef.current);
-    setPinnedOpen(false);
-    setIsHovered(false);
-    setVoiceOpen(false);
-    setActiveAlert(alert);
-    if (durationMs > 0) {
-      alertTimeoutRef.current = window.setTimeout(() => {
-        setActiveAlert(null);
-      }, durationMs);
+  const cancelInFlightGemini = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
-  };
+    stopVoiceRecognition();
+    setAssistantLoading(false);
+    setBotForm('listening');
+  }, [stopVoiceRecognition]);
 
-  // Keyboard shortcuts: Super+I / Alt+I for Voice Assistant, Super+V / Alt+V for Clipboard, Esc to close
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.altKey) && e.key.toLowerCase() === 'i') {
-        e.preventDefault();
-        setActiveAlert(null);
-        setPinnedOpen(false);
-        setVoiceOpen((v) => !v);
-        setBotForm('listening');
-      } else if ((e.metaKey || e.altKey) && e.key.toLowerCase() === 'v') {
-        e.preventDefault();
-        setActiveAlert(null);
-        setVoiceOpen(false);
-        setActivePage('shelf');
-        setShelfTab('clipboard');
-        setClipSearchOpen(true);
-        setPinnedOpen(true);
-      } else if (e.key === 'Escape') {
-        if (voiceOpen) setVoiceOpen(false);
-        else if (activeAlert) setActiveAlert(null);
-        else if (pinnedOpen || isHovered) {
-          setPinnedOpen(false);
-          setIsHovered(false);
+  // Convert an uploaded / pasted / dropped image File into a compressed base64 PendingImageAttachment
+  const attachImageFile = useCallback((file: File) => {
+    if (!file || !file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const rawDataUrl = String(reader.result || '');
+      if (!rawDataUrl) return;
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxDim = 1280;
+          let w = img.width || 800;
+          let h = img.height || 600;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, w, h);
+            const outMime = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+            const compressedDataUrl = canvas.toDataURL(outMime, 0.86);
+            const b64 = compressedDataUrl.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '');
+            setPendingImage({
+              dataUrl: compressedDataUrl,
+              base64: b64,
+              mimeType: outMime,
+              name: file.name || 'image.jpg',
+            });
+            return;
+          }
+        } catch {
+          // fallback to rawDataUrl below
+        }
+        const b64 = rawDataUrl.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '');
+        setPendingImage({
+          dataUrl: rawDataUrl,
+          base64: b64,
+          mimeType: file.type || 'image/png',
+          name: file.name || 'image.png',
+        });
+      };
+      img.src = rawDataUrl;
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  // Automatic Screen Capture for "ambil screenshot" / "tangkap layar" / "lihat layarku sekarang" commands
+  const captureCurrentScreenAuto = useCallback(async (): Promise<PendingImageAttachment | null> => {
+    // 1. Try native OS screenshot via /api/system/screenshot (works on Windows host via PowerShell CopyFromScreen)
+    try {
+      const osRes = await fetch('/api/system/screenshot');
+      if (osRes.ok) {
+        const osData = await osRes.json();
+        if (osData?.captured && osData?.data) {
+          const mime = osData.mimeType || 'image/jpeg';
+          return {
+            dataUrl: `data:${mime};base64,${osData.data}`,
+            base64: osData.data,
+            mimeType: mime,
+            name: `screenshot-${Date.now()}.jpg`,
+          };
         }
       }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [voiceOpen, activeAlert, pinnedOpen, isHovered]);
-
-  // Mark notifications seen when opening Notifications page
-  useEffect(() => {
-    if ((isHovered || pinnedOpen) && activePage === 'notifications') {
-      setNotifications((prev) => prev.map((n) => ({ ...n, seen: true })));
+    } catch {
+      // Fallback to client-side viewport compositor
     }
-  }, [isHovered, pinnedOpen, activePage]);
 
-  // Determine current island presentation & dimensions per docs/product-spec.md
-  const topBarHeight = hangingCompact ? 26 : 32;
-  const isExpanded = isHovered || pinnedOpen;
+    // 2. Client-side Automatic Viewport & Dynamic Island Visual Compositor (Zero permission popup!)
+    try {
+      const canvas = document.createElement('canvas');
+      const w = 1280;
+      const h = 720;
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
 
-  const presentation = useMemo(() => {
-    if (voiceOpen) {
-      const h = chatExpanded ? 390 : activeTurn?.commandCard ? 236 : 118;
+      // Render desktop background gradient
+      const bgGrad = ctx.createLinearGradient(0, 0, w, h);
+      bgGrad.addColorStop(0, '#0f172a');
+      bgGrad.addColorStop(0.5, '#1e1b4b');
+      bgGrad.addColorStop(1, '#090d16');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, w, h);
+
+      // Draw Dynamic Island card in top center
+      const islandW = 540;
+      const islandH = 210;
+      const islandX = Math.round((w - islandW) / 2);
+      const islandY = 28;
+      ctx.fillStyle = '#09090b';
+      ctx.beginPath();
+      ctx.roundRect(islandX, islandY, islandW, islandH, 34);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Header inside Island
+      ctx.fillStyle = '#30d158';
+      ctx.beginPath();
+      ctx.arc(islandX + 160, islandY + 28, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#e5e5ea';
+      ctx.font = '600 15px Inter, system-ui, sans-serif';
+      ctx.fillText(
+        `Battery ${batteryLevel}% · ${headerDateStr} ${nowDate.getFullYear()} · ${timeStr}`,
+        islandX + 176,
+        islandY + 33
+      );
+
+      // Active Track / Media info inside Island
+      const trackLabel = activeTrack
+        ? `${activeTrack.title} - ${activeTrack.artist || 'Artist'}`
+        : 'Tidak ada media yang sedang diputar';
+      const sourceLabel = activeTrack
+        ? activeTrack.sourceType === 'external'
+          ? `Sumber: ${activeTrack.externalApp || 'Aplikasi Eksternal'} (Shuffle: ${
+              externalShuffleEnabled ? 'ON' : 'OFF'
+            })`
+          : `Sumber: Internal AI Player (Mood Shuffle: ${moodShuffleEnabled ? 'ON' : 'OFF'}, Antrian: ${
+              musicQueue.length
+            })`
+        : 'Status: Idle / Standby';
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 20px Inter, system-ui, sans-serif';
+      ctx.fillText(trackLabel.slice(0, 44), islandX + 36, islandY + 82);
+
+      ctx.fillStyle = '#a1a1aa';
+      ctx.font = '500 14px Inter, system-ui, sans-serif';
+      ctx.fillText(sourceLabel, islandX + 36, islandY + 108);
+
+      // Active Lyric Line if available
+      if (activeTrack && parsedLyrics.length > 0) {
+        const curLine =
+          parsedLyrics[Math.max(0, activeLineIndex)]?.text || parsedLyrics[0]?.text || '';
+        if (curLine) {
+          ctx.fillStyle = '#fde047';
+          ctx.font = '600 15px Inter, system-ui, sans-serif';
+          ctx.fillText(`♪ "${curLine.slice(0, 52)}"`, islandX + 36, islandY + 140);
+        }
+      }
+
+      // Progress bar inside Island
+      ctx.fillStyle = 'rgba(255,255,255,0.2)';
+      ctx.fillRect(islandX + 36, islandY + 162, islandW - 72, 6);
+      if (activeTrack && activeTrack.durationMs > 0) {
+        const ratio = Math.min(1, Math.max(0, positionMs / activeTrack.durationMs));
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(islandX + 36, islandY + 162, Math.round((islandW - 72) * ratio), 6);
+      }
+
+      // Workspace Status Panel on screen
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+      ctx.beginPath();
+      ctx.roundRect(120, 275, w - 240, 360, 24);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 22px Inter, system-ui, sans-serif';
+      ctx.fillText('Isle Desktop Workspace — Live Screen Capture', 156, 322);
+
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = '500 16px Inter, system-ui, sans-serif';
+      const statusLines = [
+        `• Menu Aktif Dynamic Island: ${activePage.toUpperCase()}${lyricsMode ? ' (Lyrics Mode Terbuka)' : ''}`,
+        `• Musik Sekarang: ${trackLabel} (${formatTrackTime(positionMs)} / ${formatTrackTime(
+          activeTrack?.durationMs || 0
+        )})`,
+        `• Sistem: Volume ${volume}% ${muted ? '(Muted)' : ''} · Brightness ${brightness}/10 · Wi-Fi ${
+          wifiEnabled ? 'ON' : 'OFF'
+        } · Bluetooth ${bluetoothEnabled ? 'ON' : 'OFF'}`,
+        `• Focus Pomodoro: ${formatPomoTime(pomoRemainingSeconds)} (${
+          pomoRunning ? 'Berjalan' : 'Dijeda'
+        }) · Sesi Selesai: ${pomoSessionsCompleted}`,
+        `• To-Do Tasks (${tasks.length}): ${
+          tasks.slice(0, 3).map((t) => `${t.done ? '[✓]' : '[ ]'} ${t.title}`).join(' | ') ||
+          'Belum ada task'
+        }`,
+        `• Shelf Files (${shelfFiles.length}): ${
+          shelfFiles.map((f) => f.name).join(', ') || 'Kosong'
+        }`,
+        `• Smart Alarms: ${
+          smartAlarms.map((a) => `${a.title} (${a.time})`).join(', ') || 'Tidak ada alarm'
+        }`,
+      ];
+      statusLines.forEach((line, idx) => {
+        ctx.fillText(line.slice(0, 92), 156, 364 + idx * 36);
+      });
+
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+      const base64 = dataUrl.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '');
       return {
-        mode: 'voice' as const,
-        width: 600,
-        height: topBarHeight + h,
-        radius: 30,
-        shoulder: 20,
+        dataUrl,
+        base64,
+        mimeType: 'image/jpeg',
+        name: `tangkap-layar-${Date.now()}.jpg`,
       };
+    } catch {
+      return null;
     }
-    if (isExpanded) {
-      const isWideLyrics = activePage === 'music' && lyricsMode;
-      return {
-        mode: 'expanded' as const,
-        width: isWideLyrics ? 720 : 600,
-        height: topBarHeight + 168,
-        radius: 32,
-        shoulder: 22,
-      };
-    }
-    if (activeAlert) {
-      const isAgentAsk = activeAlert.kind === 'agent-ask';
-      return {
-        mode: 'peek' as const,
-        width: isAgentAsk ? 410 : 356,
-        height: topBarHeight + (isAgentAsk ? 104 : 58),
-        radius: 22,
-        shoulder: 13,
-      };
-    }
-
-    // Compact (Closed) presentation
-    const hasActivity =
-      callActive ||
-      screenRecording ||
-      isPlaying ||
-      pomoPhase !== Phase.Idle ||
-      unseenCount > 0;
-    const hasPrivacy =
-      privacyDots.camera || privacyDots.microphone || privacyDots.screenShare;
-    const baseW = hangingCompact
-      ? hasActivity
-        ? 256
-        : 164
-      : hasActivity
-      ? 236
-      : 148;
-    return {
-      mode: 'compact' as const,
-      width: baseW + (hasPrivacy ? 22 : 0),
-      height: hangingCompact ? topBarHeight + 28 : topBarHeight,
-      radius: hangingCompact ? 16 : 10,
-      shoulder: hangingCompact ? 10 : 7,
-    };
   }, [
-    voiceOpen,
-    chatExpanded,
-    activeTurn,
-    isExpanded,
+    activeLineIndex,
     activePage,
+    activeTrack,
+    batteryLevel,
+    bluetoothEnabled,
+    brightness,
+    externalShuffleEnabled,
+    headerDateStr,
     lyricsMode,
-    activeAlert,
-    topBarHeight,
-    hangingCompact,
-    callActive,
-    screenRecording,
-    isPlaying,
-    pomoPhase,
-    unseenCount,
-    privacyDots,
+    moodShuffleEnabled,
+    musicQueue.length,
+    muted,
+    nowDate,
+    parsedLyrics,
+    pomoRemainingSeconds,
+    pomoRunning,
+    pomoSessionsCompleted,
+    positionMs,
+    shelfFiles,
+    smartAlarms,
+    tasks,
+    timeStr,
+    volume,
+    wifiEnabled,
   ]);
 
-  // Determine surface tint (cover wash on lyrics, corner glow on file drop, flowing aura on voice assistant)
-  const surfaceTint = useMemo(() => {
-    if (voiceOpen) {
-      return {
-        style: 'aura' as const,
-        rgb: currentTrack.tintRgb,
-        aura: paletteFor(botColor, botGlowMode).glow,
-      };
+  const handleAskGemini = async (promptText: string) => {
+    const rawQ = promptText.trim().slice(0, 1000);
+    // Detect auto-screenshot intent ("ambil screenshot", "tangkap layar", "lihat layarku sekarang", etc.)
+    const isAutoScreenshotIntent =
+      /\b(ambil\s+screenshot|tangkap\s+layar|lihat\s+layarku|lihat\s+layar\s+saya|cek\s+layarku|cek\s+layar\s+saya|apa\s+yang\s+ada\s+di\s+layarku|analisis\s+layarku|baca\s+layarku|screenshot\s+layar|screenshot\s+sekarang|take\s+a?\s*screenshot|capture\s+screen|look\s+at\s+my\s+screen|what\s+is\s+on\s+my\s+screen)\b/i.test(
+        rawQ
+      );
+
+    if (!rawQ && !pendingImage && !isAutoScreenshotIntent) return;
+
+    // Chaos Guard: Block duplicate rapid-fire Enter spam while a request is already in-flight
+    const now = Date.now();
+    if (assistantLoading || now - lastAskTimeRef.current < 350) {
+      setSpamNotice('Please wait — Isle Assistant is still responding...');
+      window.setTimeout(() => setSpamNotice(null), 1800);
+      return;
     }
-    if (shelfCornerGlow && isExpanded && activePage === 'shelf') {
-      return {
-        style: 'glow' as const,
-        rgb: shelfCornerGlow,
-        aura: paletteFor(botColor, botGlowMode).glow,
-      };
-    }
-    if (isExpanded && activePage === 'music' && lyricsMode) {
-      return {
-        style: 'wash' as const,
-        rgb: currentTrack.tintRgb,
-        aura: paletteFor(botColor, botGlowMode).glow,
-      };
-    }
-    return {
-      style: 'none' as const,
-      rgb: currentTrack.tintRgb,
-      aura: paletteFor(botColor, botGlowMode).glow,
-    };
-  }, [
-    voiceOpen,
-    shelfCornerGlow,
-    isExpanded,
-    activePage,
-    lyricsMode,
-    currentTrack.tintRgb,
-    botColor,
-    botGlowMode,
-  ]);
+    lastAskTimeRef.current = now;
+    setSpamNotice(null);
 
-  const handleIslandMouseEnter = () => {
-    if (leaveTimerRef.current) window.clearTimeout(leaveTimerRef.current);
-    if (voiceOpen || activeAlert) return;
-    if (!openOnHover) return;
-    hoverTimerRef.current = window.setTimeout(() => {
-      setIsHovered(true);
-    }, 120);
-  };
-
-  const handleIslandMouseLeave = () => {
-    if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
-    if (pinnedOpen || isDraggingOverShelf) return;
-    leaveTimerRef.current = window.setTimeout(() => {
-      setIsHovered(false);
-    }, 280);
-  };
-
-  const formatClock = (date: Date) => {
-    const h = date.getHours();
-    const m = date.getMinutes().toString().padStart(2, '0');
-    if (use24Hour) return `${h.toString().padStart(2, '0')}:${m}`;
-    const h12 = h % 12 || 12;
-    return `${h12}:${m}`;
-  };
-
-  const formatHeaderDate = (date: Date) =>
-    date.toLocaleDateString('en-GB', {
-      weekday: 'short',
-      day: 'numeric',
-      month: 'short',
-    });
-
-  const handleSendVoicePrompt = (promptText: string) => {
-    const q = promptText.trim();
-    if (!q) return;
-    setVoiceQuery('');
+    let imageToSend: PendingImageAttachment | null = pendingImage;
+    setPendingImage(null);
+    setAssistantInput('');
+    setShowAllChatHistory(false);
+    const effectivePrompt =
+      rawQ || 'Tolong analisis dan jelaskan apa yang ada pada gambar ini secara ringkas.';
+    setAgentTranscript(effectivePrompt);
+    setAssistantLoading(true);
     setBotForm('thinking');
 
-    const lower = q.toLowerCase();
-    const newId = Date.now();
-
-    if (lower.includes('install') || lower.includes('pasang') || lower.includes('update')) {
-      const pkg = lower.includes('libreoffice')
-        ? 'libreoffice'
-        : lower.includes('vlc')
-        ? 'vlc'
-        : lower.includes('ffmpeg')
-        ? 'ffmpeg'
-        : 'neovim';
-      setTimeout(() => setBotForm('asking'), 450);
-      setChatHistory((prev) => [
-        ...prev,
-        {
-          id: newId,
-          userText: q,
-          steps: [
-            'Checked /etc/os-release (Ubuntu 24.04 LTS)',
-            `Checked apt-cache policy ${pkg} → candidate found`,
-          ],
-          commandCard: {
-            purpose: `Install ${pkg} via APT package manager`,
-            command: `sudo apt install -y ${pkg}`,
-            riskLabel: 'Needs your password',
-            riskLevel: 'amber',
-            status: 'pending',
-          },
-          replyText: `Ready to install ${pkg}. Approve the command below to run it in a background systemd unit.`,
-          timestamp: formatClock(new Date()),
-        },
-      ]);
-    } else if (lower.includes('remind') || lower.includes('ingatkan')) {
-      const reminderTitle = q.replace(/^(remind me to|ingatkan saya untuk)\s+/i, '');
-      setReminders((prev) => [{ id: Date.now(), title: reminderTitle }, ...prev]);
-      setTimeout(() => {
-        setBotForm('reply');
-        setBotGesture({ type: 'nod', id: Date.now() });
-      }, 400);
-      setChatHistory((prev) => [
-        ...prev,
-        {
-          id: newId,
-          userText: q,
-          steps: [`Added "${reminderTitle}" to ~/.local/share/isle/reminders.json`],
-          replyText: `Added "${reminderTitle}" to your Reminders list.`,
-          timestamp: formatClock(new Date()),
-        },
-      ]);
-    } else if (lower.includes('play') || lower.includes('music') || lower.includes('jazz')) {
-      setIsPlaying(true);
-      setTrackIndex((i) => (i + 1) % SAMPLE_TRACKS.length);
-      setTrackPosMs(0);
-      setTimeout(() => {
-        setBotForm('reply');
-        setBotGesture({ type: 'hop', id: Date.now() });
-      }, 400);
-      setChatHistory((prev) => [
-        ...prev,
-        {
-          id: newId,
-          userText: q,
-          steps: [
-            'Found active MPRIS player: org.mpris.MediaPlayer2.spotify',
-            'Switched track and started playback',
-          ],
-          replyText: `Playing "${SAMPLE_TRACKS[(trackIndex + 1) % SAMPLE_TRACKS.length].title}" on Spotify with synced lyrics ready.`,
-          timestamp: formatClock(new Date()),
-        },
-      ]);
-    } else {
-      setTimeout(() => {
-        setBotForm('reply');
-        setBotGesture({ type: 'nod', id: Date.now() });
-      }, 500);
-      setChatHistory((prev) => [
-        ...prev,
-        {
-          id: newId,
-          userText: q,
-          steps: [
-            'Checked system load & active windows via GNOME Shell D-Bus',
-            'Verified thermal & memory pressure (0% swap used)',
-          ],
-          replyText:
-            'Your GNOME desktop is running smoothly at 60 Hz. isled is using 9.8 MB resident memory with 0% idle CPU.',
-          timestamp: formatClock(new Date()),
-        },
-      ]);
+    // If user typed a screenshot command ("ambil screenshot", "lihat layarku sekarang", etc.) and didn't attach an image manually,
+    // automatically capture the screen and attach it directly to the chat!
+    if (!imageToSend && isAutoScreenshotIntent) {
+      setAgentHeadline('Menangkap layar saat ini (Auto-Screenshot)...');
+      imageToSend = await captureCurrentScreenAuto();
     }
-  };
 
-  const handleRunCommandCard = (turnId: number) => {
-    setBotForm('running');
-    setBotGesture({ type: 'nod', id: Date.now() });
-    setChatHistory((prev) =>
-      prev.map((t) =>
-        t.id === turnId && t.commandCard
-          ? {
-              ...t,
-              commandCard: {
-                ...t.commandCard,
-                status: 'running',
-                logs: [
-                  'Reading package lists... Done',
-                  'Unpacking & setting up package (systemd transient unit)...',
-                ],
-              },
-            }
-          : t
-      )
+    // Only execute local non-vision shortcut commands if there is no image/screenshot to analyze
+    const localCmd = !imageToSend ? executeIslandCommand(effectivePrompt) : { handled: false };
+    setAgentHeadline(
+      localCmd.reply ||
+        (imageToSend ? 'Menganalisis gambar dengan Vision AI...' : 'Isle Assistant thinking...')
     );
-    setTimeout(() => {
-      setBotForm('success');
-      setChatHistory((prev) =>
-        prev.map((t) =>
-          t.id === turnId && t.commandCard
+
+    const userMsgId = now;
+    const historySnapshot = messages.slice(-8).map((m) => ({
+      role: m.role,
+      text: m.text,
+    }));
+
+    setMessages((prev) => [
+      ...prev.slice(-58),
+      {
+        id: userMsgId,
+        role: 'user',
+        text: effectivePrompt,
+        imageUrl: imageToSend?.dataUrl,
+        timestamp: timeStr,
+      },
+    ]);
+
+    // If local command (e.g. play song, set alarm, volume, brightness) was already handled, return immediately to prevent double execution!
+    if (localCmd.handled) {
+      const botMsgId = now + 1;
+      const replyStr = localCmd.reply || 'Perintah telah dijalankan.';
+      setAnimatingMsgId(botMsgId);
+      setRevealedChars(0);
+      setMessages((prev) => [
+        ...prev,
+        { id: botMsgId, role: 'assistant', text: replyStr, timestamp: timeStr },
+      ]);
+      setBotForm('reply');
+      setAssistantLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const res = await fetch('/api/gemini/assistant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          prompt: effectivePrompt,
+          image: imageToSend
             ? {
-                ...t,
-                commandCard: {
-                  ...t.commandCard,
-                  status: 'done',
-                  durationText: '2.1s',
-                },
-                replyText:
-                  'Verified installation (--version returned 0). Everything is installed and ready.',
+                data: imageToSend.base64,
+                mimeType: imageToSend.mimeType,
               }
-            : t
-        )
-      );
-    }, 1800);
-  };
-
-  const handleDenyCommandCard = (turnId: number) => {
-    setBotForm('reply');
-    setBotGesture({ type: 'shake', id: Date.now() });
-    setChatHistory((prev) =>
-      prev.map((t) =>
-        t.id === turnId && t.commandCard
-          ? {
-              ...t,
-              commandCard: {
-                ...t.commandCard,
-                status: 'denied',
-              },
-              replyText: 'Command denied. Nothing was changed on your system.',
-            }
-          : t
-      )
-    );
-  };
-
-  const handleDropSampleFile = () => {
-    setActiveAlert(null);
-    setVoiceOpen(false);
-    setActivePage('shelf');
-    setShelfTab('files');
-    setPinnedOpen(true);
-    if (shelfFiles.length >= 6) return;
-    const palette: [number, number, number][] = [
-      [0.19, 0.82, 0.35],
-      [0.04, 0.52, 1],
-      [0.67, 0.56, 1],
-    ];
-    const pick = palette[shelfFiles.length % palette.length];
-    const nextFile: ShelfFileItem = {
-      id: Date.now(),
-      name: `wayland-trace-${shelfFiles.length + 1}.log`,
-      kind: 'code',
-      size: '84 KB',
-      accentRgb: pick,
-      previewGradient: 'linear-gradient(135deg, #1e1b4b, #4338ca)',
-    };
-    setShelfFiles((prev) => [nextFile, ...prev]);
-    setShelfCornerGlow(pick);
-    setTimeout(() => setShelfCornerGlow(null), 2200);
-  };
-
-  // Pages list per docs/product-spec.md
-  const pages: { id: PageId; label: string; icon: React.ReactNode; badge?: boolean }[] = [
-    ...(callActive
-      ? [
-          {
-            id: 'call' as const,
-            label: 'Call',
-            icon: <Phone className="w-3.5 h-3.5 text-[#30d158]" />,
+            : undefined,
+          history: historySnapshot,
+          currentState: {
+            activePage,
+            isPlaying,
+            flacEnabled,
+            moodShuffleEnabled:
+              activeTrack?.sourceType === 'external' ? externalShuffleEnabled : moodShuffleEnabled,
+            queueCount: musicQueue.length,
+            trackTitle: activeTrack ? `${activeTrack.title} - ${activeTrack.artist}` : 'Idle',
+            volume,
+            brightness,
+            bluetoothEnabled,
+            wifiEnabled,
+            muted,
+            batteryLevel,
+            isCharging,
+            pomoRunning,
+            pomoRemaining: formatPomoTime(pomoRemainingSeconds),
+            shelfCount: shelfFiles.length,
+            notificationsCount: unreadNotifCount,
+            pendingTasksCount: tasks.length - completedCount,
           },
-        ]
-      : []),
-    { id: 'music', label: 'Music', icon: <Music className="w-3.5 h-3.5" /> },
-    {
-      id: 'notifications',
-      label: 'Notifications',
-      icon: <Bell className="w-3.5 h-3.5" />,
-      badge: unseenCount > 0,
-    },
-    { id: 'focus', label: 'Focus', icon: <Timer className="w-3.5 h-3.5" /> },
-    {
-      id: 'reminders',
-      label: 'Reminders',
-      icon: <ListTodo className="w-3.5 h-3.5" />,
-    },
-    { id: 'shelf', label: 'Shelf', icon: <FolderOpen className="w-3.5 h-3.5" /> },
-    {
-      id: 'calendar',
-      label: 'Calendar',
-      icon: <CalendarIcon className="w-3.5 h-3.5" />,
-    },
-    { id: 'usage', label: 'Usage', icon: <Gauge className="w-3.5 h-3.5" /> },
-  ];
+        }),
+      });
 
-  // Calendar grid helper
-  const calendarDays = useMemo(() => {
-    const year = nowDate.getFullYear();
-    const month = nowDate.getMonth();
-    const firstDay = new Date(year, month, 1);
-    const startOffset = (firstDay.getDay() + 6) % 7; // Monday first
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const cells: { day: number | null; iso: string; hasEvent: boolean }[] = [];
-    for (let i = 0; i < startOffset; i++) {
-      cells.push({ day: null, iso: `pad-${i}`, hasEvent: false });
-    }
-    for (let d = 1; d <= daysInMonth; d++) {
-      const mStr = (month + 1).toString().padStart(2, '0');
-      const dStr = d.toString().padStart(2, '0');
-      const iso = `${year}-${mStr}-${dStr}`;
-      const hasEvent = events.some((e) => e.date === iso);
-      cells.push({ day: d, iso, hasEvent });
-    }
-    return cells;
-  }, [nowDate, events]);
+      const data: GeminiAssistantResponse = await res.json();
 
-  const selectedDayEvents = useMemo(
-    () => events.filter((e) => e.date === selectedDateIso),
-    [events, selectedDateIso]
-  );
+      if (res.status === 429) {
+        setSpamNotice(data.error || 'Rate limit reached. Slow down a bit!');
+        window.setTimeout(() => setSpamNotice(null), 3000);
+      }
 
-  // Focus ring progress
-  const focusProgress = useMemo(() => {
-    if (pomoPhase === Phase.Idle || pomoDurationMs <= 0) return 0;
-    return Math.max(0, Math.min(1, 1 - pomoRemainingMs / pomoDurationMs));
-  }, [pomoPhase, pomoRemainingMs, pomoDurationMs]);
+      const replyText = data.reply || data.error || 'Done.';
+      setAgentHeadline(replyText);
+      const sources = Array.isArray(data.searchSources) ? data.searchSources : [];
+      setLatestSearchSources(sources);
 
-  return (
-    <div
-      className="relative w-screen h-screen overflow-hidden flex flex-col justify-between select-none"
-      style={{
-        background:
-          'radial-gradient(circle at 50% 0%, #1e293b 0%, #0f172a 42%, #090d16 100%)',
-      }}
-      onDragOver={(e) => {
-        e.preventDefault();
-        if (!isDraggingOverShelf) {
-          setIsDraggingOverShelf(true);
-          setActivePage('shelf');
-          setShelfTab('files');
-          setPinnedOpen(true);
+      const newReplyId = Date.now() + 2;
+      setRevealedChars(0);
+      setAnimatingMsgId(newReplyId);
+
+      setMessages((prev) => {
+        const next = [...prev.slice(-58)];
+        next.push({
+          id: newReplyId,
+          role: 'assistant',
+          text: replyText,
+          imageUrl: imageToSend?.dataUrl,
+          timestamp: timeStr,
+          searchSources: sources.length > 0 ? sources : undefined,
+          commandCard: data.commandCard,
+          foundFiles: data.foundFiles,
+        });
+        return next;
+      });
+
+      setBotForm(res.ok ? 'reply' : 'error');
+
+      // Execute island & laptop actions if returned by Gemini
+      if (data.action === 'play_song' && data.trackData) {
+        const queryTitle = (data.trackData.title || '').toLowerCase();
+        const recentlyPlayed =
+          Date.now() - lastPlayedSongTimeRef.current < 6000 &&
+          (queryTitle.includes(lastPlayedSongQueryRef.current) ||
+            lastPlayedSongQueryRef.current.includes(queryTitle));
+        if (!recentlyPlayed) {
+          if (activeTrackRef.current && activeTrackRef.current.sourceType !== 'external') {
+            setMusicHistory((prev) => [activeTrackRef.current!, ...prev.slice(0, 19)]);
+          }
+          shuffleBufferRef.current = null;
+          loadAndPlayRealTrack({ ...data.trackData, sourceType: 'internal' });
+          navigateToPage(0);
         }
-      }}
-      onDragLeave={() => setIsDraggingOverShelf(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setIsDraggingOverShelf(false);
-        handleDropSampleFile();
-      }}
-    >
-      {/* Subtle Desktop Wallpaper Ambient Light */}
-      <div
-        className="pointer-events-none absolute inset-0 opacity-35"
-        style={{
-          backgroundImage:
-            'radial-gradient(650px circle at 20% 25%, rgba(56, 189, 248, 0.14), transparent 70%), radial-gradient(750px circle at 80% 20%, rgba(139, 92, 246, 0.14), transparent 70%)',
-        }}
-      />
+      } else if (data.action === 'queue_song') {
+        if (data.trackData) {
+          enqueueResolvedTrack(data.trackData);
+        } else if (data.actionParam) {
+          handleQueueSongMedia(data.actionParam);
+        }
+        navigateToPage(0);
+      } else if (data.action === 'clear_queue') {
+        setMusicQueue([]);
+      } else if (data.action === 'shuffle_on') {
+        if (activeTrackRef.current?.sourceType === 'external') {
+          setExternalShuffleEnabled(true);
+          sendExternalMediaCommand('shuffle', true);
+        } else {
+          setMoodShuffleEnabled(true);
+          if (!activeTrackRef.current) {
+            triggerSmartMoodShuffle(null);
+          }
+        }
+        navigateToPage(0);
+      } else if (data.action === 'shuffle_off') {
+        if (activeTrackRef.current?.sourceType === 'external') {
+          setExternalShuffleEnabled(false);
+          sendExternalMediaCommand('shuffle', false);
+        } else {
+          setMoodShuffleEnabled(false);
+        }
+      } else if (data.action === 'bluetooth_off') {
+        setBluetoothEnabled(false);
+        pushRealNotification('Bluetooth Dimatikan', 'Radio Bluetooth laptop dinonaktifkan.', 'message');
+      } else if (data.action === 'bluetooth_on') {
+        setBluetoothEnabled(true);
+        pushRealNotification('Bluetooth Diaktifkan', 'Radio Bluetooth laptop aktif.', 'message');
+      } else if (data.action === 'wifi_off') {
+        setWifiEnabled(false);
+        pushRealNotification('Wi-Fi Dimatikan', 'Adaptor Wi-Fi dinonaktifkan.', 'message');
+      } else if (data.action === 'wifi_on') {
+        setWifiEnabled(true);
+        pushRealNotification('Wi-Fi Diaktifkan', 'Adaptor Wi-Fi terhubung.', 'message');
+      } else if (data.action === 'set_volume' && data.actionParam) {
+        const v = Math.min(100, Math.max(0, Number(data.actionParam) || 50));
+        setMuted(v === 0);
+        setVolume(v);
+      } else if (data.action === 'set_brightness' && data.actionParam) {
+        const b = Math.min(10, Math.max(0, Number(data.actionParam) || 7));
+        setBrightness(b);
+      } else if (data.action === 'play_music') {
+        if (activeTrack) {
+          audioElRef.current?.play().catch(() => {});
+          setIsPlaying(true);
+        }
+        navigateToPage(0);
+      } else if (data.action === 'pause_music') {
+        audioElRef.current?.pause();
+        setIsPlaying(false);
+      } else if (data.action === 'next_track') {
+        handleNextTrack();
+      } else if (data.action === 'prev_track') {
+        handlePrevTrack();
+      } else if (data.action === 'set_volume_30') {
+        setMuted(false);
+        setVolume(30);
+      } else if (data.action === 'mute_volume') {
+        setMuted(true);
+      } else if (data.action === 'unmute_volume') {
+        setMuted(false);
+      } else if (data.action === 'toggle_lyrics') {
+        navigateToPage(0);
+        setLyricsMode(true);
+      } else if (data.action === 'start_pomodoro') {
+        navigateToPage(2);
+        setPomoRunning(true);
+      } else if (data.action === 'pause_pomodoro') {
+        setPomoRunning(false);
+      } else if (data.action === 'reset_pomodoro') {
+        setPomoRunning(false);
+        setPomoRemainingSeconds(pomoTotalSeconds);
+      } else if (data.action === 'open_shelf') {
+        navigateToPage(4);
+      } else if (data.action === 'clear_shelf') {
+        setShelfFiles([]);
+        navigateToPage(4);
+      } else if (data.action === 'open_calendar' || data.action === 'add_calendar_event') {
+        if (data.actionParam) handleAddCalendarEvent(data.actionParam);
+        navigateToPage(5);
+      } else if (data.action === 'open_notifications') {
+        navigateToPage(1);
+      } else if (data.action === 'toggle_dnd') {
+        setDndEnabled((d) => !d);
+      } else if (data.action === 'add_todo' && data.actionParam) {
+        const cleanTask = data.actionParam.slice(0, 80);
+        setTasks((prev) => [
+          ...prev.slice(-29),
+          {
+            id: Date.now(),
+            title: cleanTask,
+            time: timeStr,
+            done: false,
+          },
+        ]);
+        pushRealNotification('Task Baru Ditambahkan', cleanTask, 'message');
+        navigateToPage(3);
+      } else if (data.action === 'set_alarm_and_reminder' && data.actionParam) {
+        executeIslandCommand(data.actionParam);
+      } else if (data.action === 'volume_up') {
+        setMuted(false);
+        setVolume((curr) => {
+          const next = Math.min(100, curr + 15);
+          triggerAlert('volume', { value: next });
+          return next;
+        });
+      } else if (data.action === 'volume_down') {
+        setVolume((curr) => {
+          const next = Math.max(0, curr - 15);
+          triggerAlert('volume', { value: next });
+          return next;
+        });
+      } else if (data.action === 'brightness_up') {
+        setBrightness((curr) => {
+          const next = Math.min(10, curr + 2);
+          triggerAlert('brightness', { value: next });
+          return next;
+        });
+      } else if (data.action === 'brightness_down') {
+        setBrightness((curr) => {
+          const next = Math.max(1, curr - 2);
+          triggerAlert('brightness', { value: next });
+          return next;
+        });
+      }
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        setAgentHeadline('Permintaan dibatalkan');
+        return;
+      }
+      console.error(err);
+      setAgentHeadline('Gagal terhubung ke layanan Gemini API');
+      setBotForm('error');
+    } finally {
+      abortControllerRef.current = null;
+      setAssistantLoading(false);
+      if (assistantMode === 'conversation') {
+        setTimeout(() => assistantInputRef.current?.focus(), 30);
+      }
+    }
+  };
 
-      {/* ── GNOME TOP BAR ── */}
-      <header
-        className="relative z-40 w-full flex items-center justify-between px-3.5 text-[13px] font-medium text-white transition-colors"
-        style={{
-          height: topBarHeight,
-          backgroundColor: `rgba(0, 0, 0, ${barOpacity})`,
-          textShadow: barOpacity < 0.5 ? '0 1px 3px rgba(0,0,0,0.55)' : 'none',
-        }}
-      >
-        {/* Left: GNOME Activities pill & active app label */}
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => {
-              setPinnedOpen((p) => !p);
-              setVoiceOpen(false);
-              setActiveAlert(null);
-            }}
-            className="flex items-center gap-1.5 px-2 py-0.5 rounded-full hover:bg-white/15 transition"
-            title="Toggle Isle Expanded View"
-          >
-            <span className="w-3.5 h-2 rounded-full bg-white inline-block" />
-            <span className="w-1.5 h-1.5 rounded-full bg-white/50 inline-block" />
-          </button>
-          <span className="text-white/85 hidden sm:inline">Isle Desktop</span>
-        </div>
+  // Keep latest handleAskGemini in ref so Voice Recognition never uses a stale closure
+  handleAskGeminiRef.current = handleAskGemini;
 
-        {/* Center: ISLE NOTCH ISLAND */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center">
-          <IslandSurface
-            width={presentation.width}
-            height={presentation.height}
-            radius={presentation.radius}
-            shoulder={presentation.shoulder}
-            topInset={barOpacity > 0.92 ? topBarHeight : 0}
-            tintStyle={surfaceTint.style}
-            tintRgb={surfaceTint.rgb}
-            auraColors={surfaceTint.aura}
-            voiceLevel={voiceLevel}
-            nudgeTrigger={nudgeCount}
-            onMouseEnter={handleIslandMouseEnter}
-            onMouseLeave={handleIslandMouseLeave}
-            onClick={() => {
-              if (presentation.mode === 'compact') {
-                setPinnedOpen(true);
-              } else if (presentation.mode === 'peek' && activeAlert) {
-                if (activeAlert.kind === 'meeting') {
-                  setActivePage('calendar');
-                  setActiveAlert(null);
-                  setPinnedOpen(true);
-                } else if (activeAlert.kind !== 'agent-ask') {
-                  setActiveAlert(null);
-                  setPinnedOpen(true);
+  // Real-time two-way voice conversation via Gemini 3.8 Live API WebSocket + Web Speech API
+  const startBrowserVoiceRecognition = useCallback(
+    (forceStart = false) => {
+      if (voiceListening && !forceStart) {
+        stopVoiceRecognition();
+        setAgentHeadline('Sesi suara dihentikan');
+        return;
+      }
+
+      stopVoiceRecognition();
+      setVoiceStatusHint(null);
+      setVoiceListening(true);
+      setBotForm('listening');
+      setAgentTranscript('');
+      setAgentHeadline('Menghubungkan Isle Assistant...');
+      liveInputAccRef.current = '';
+      liveOutputAccRef.current = '';
+
+      // 1. Connect to Server-Side Gemini 3.8 Live API WebSocket (/api/gemini/live)
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${proto}//${window.location.host}/api/gemini/live?lang=${encodeURIComponent(voiceLang)}`;
+
+      let wsConnected = false;
+      try {
+        const ws = new WebSocket(wsUrl);
+        liveWsRef.current = ws;
+
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          outputAudioCtxRef.current = new AudioCtx({ sampleRate: 24000 });
+          nextStartTimeRef.current = 0;
+        }
+
+        ws.onopen = () => {
+          wsConnected = true;
+          setLiveConnected(true);
+          setAgentHeadline('Isle Assistant aktif — silakan bicara sekarang');
+        };
+
+        ws.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === 'connected') {
+              setLiveConnected(true);
+              setAgentHeadline('Isle Assistant terhubung · Silakan bicara');
+            } else if (msg.type === 'inputTranscription' && msg.text) {
+              liveInputAccRef.current = (liveInputAccRef.current + ' ' + msg.text).trim();
+              setAgentTranscript(liveInputAccRef.current);
+              setAssistantInput(liveInputAccRef.current);
+            } else if (msg.type === 'outputTranscription' && msg.text) {
+              liveOutputAccRef.current = (liveOutputAccRef.current + msg.text).trim();
+              setAgentHeadline(liveOutputAccRef.current);
+              setBotForm('reply');
+            } else if (msg.type === 'modelText' && msg.text) {
+              liveOutputAccRef.current = (liveOutputAccRef.current + msg.text).trim();
+              setAgentHeadline(liveOutputAccRef.current);
+            } else if (msg.type === 'audio' && msg.audio && outputAudioCtxRef.current) {
+              // Play 24kHz PCM audio chunk gaplessly
+              const outCtx = outputAudioCtxRef.current;
+              if (outCtx.state === 'suspended') {
+                outCtx.resume().catch(() => {});
+              }
+              const float32 = pcm16Base64ToFloat32(msg.audio);
+              if (float32.length > 0) {
+                // Compute output voice energy for BotCanvas animation
+                let sum = 0;
+                for (let i = 0; i < float32.length; i += 8) {
+                  sum += Math.abs(float32[i]);
+                }
+                const avg = sum / (float32.length / 8);
+                setVoiceEnergy(Math.min(1, Math.max(0.25, avg * 4.5)));
+
+                const audioBuffer = outCtx.createBuffer(1, float32.length, 24000);
+                audioBuffer.getChannelData(0).set(float32);
+                const sourceNode = outCtx.createBufferSource();
+                sourceNode.buffer = audioBuffer;
+                sourceNode.connect(outCtx.destination);
+
+                const startTime = Math.max(outCtx.currentTime, nextStartTimeRef.current);
+                sourceNode.start(startTime);
+                nextStartTimeRef.current = startTime + audioBuffer.duration;
+                activeAudioNodesRef.current.push(sourceNode);
+                sourceNode.onended = () => {
+                  activeAudioNodesRef.current = activeAudioNodesRef.current.filter(
+                    (n) => n !== sourceNode
+                  );
+                };
+              }
+            } else if (msg.type === 'interrupted') {
+              for (const node of activeAudioNodesRef.current) {
+                try {
+                  node.stop();
+                } catch {
+                  // ignore
                 }
               }
-            }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              if (activeAlert) {
-                setActiveAlert(null);
-              } else if (isExpanded) {
-                setPinnedOpen(false);
-                setIsHovered(false);
-              } else {
-                setIsPlaying((p) => !p);
+              activeAudioNodesRef.current = [];
+              nextStartTimeRef.current = 0;
+            } else if (msg.type === 'turnComplete') {
+              const userSpoken = liveInputAccRef.current.trim();
+              const modelSpoken = liveOutputAccRef.current.trim();
+              if (userSpoken) {
+                executeIslandCommand(userSpoken);
               }
-            }}
-          >
-            {/* 1. COMPACT PRESENTATION */}
-            {presentation.mode === 'compact' && (
-              <div className="w-full h-full flex items-center justify-between px-3.5 gap-2.5">
-                {/* Left slot */}
-                <div className="w-6 flex items-center justify-start shrink-0">
-                  {screenRecording ? (
-                    <span className="w-2.5 h-2.5 rounded-full bg-[#ff453a] animate-pulse" />
-                  ) : callActive ? (
-                    <Phone className="w-3.5 h-3.5 text-[#30d158]" />
-                  ) : pomoPhase !== Phase.Idle ? (
-                    <svg className="w-4 h-4 -rotate-90" viewBox="0 0 20 20">
-                      <circle
-                        cx="10"
-                        cy="10"
-                        r="7"
-                        fill="none"
-                        stroke="rgba(255,255,255,0.22)"
-                        strokeWidth="2.4"
-                      />
-                      <circle
-                        cx="10"
-                        cy="10"
-                        r="7"
-                        fill="none"
-                        stroke={pomoPhase === Phase.Focus ? '#ffffff' : '#30d158'}
-                        strokeWidth="2.4"
-                        strokeDasharray={44}
-                        strokeDashoffset={44 * (1 - focusProgress)}
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                  ) : isPlaying ? (
-                    <div
-                      className="w-4 h-4 rounded-[5px] shrink-0 shadow-inner"
-                      style={{
-                        background: `linear-gradient(135deg, ${currentTrack.coverGradient[0]}, ${currentTrack.coverGradient[1]})`,
-                      }}
-                    />
-                  ) : unseenCount > 0 ? (
-                    <span className="w-1.5 h-1.5 rounded-full bg-white" />
-                  ) : null}
-                </div>
+              if (userSpoken || modelSpoken) {
+                const stamp = `${String(new Date().getHours()).padStart(2, '0')}:${String(
+                  new Date().getMinutes()
+                ).padStart(2, '0')}`;
+                setMessages((prev) => {
+                  const next = [...prev.slice(-56)];
+                  if (userSpoken) {
+                    next.push({
+                      id: Date.now() + 1,
+                      role: 'user',
+                      text: userSpoken,
+                      timestamp: stamp,
+                    });
+                  }
+                  if (modelSpoken) {
+                    next.push({
+                      id: Date.now() + 2,
+                      role: 'assistant',
+                      text: modelSpoken,
+                      timestamp: stamp,
+                    });
+                  }
+                  return next;
+                });
+                liveInputAccRef.current = '';
+                liveOutputAccRef.current = '';
+              }
+            } else if (msg.type === 'error' && msg.error) {
+              setVoiceStatusHint(msg.error);
+            }
+          } catch {
+            // ignore parse errors
+          }
+        };
 
-                {/* Center: Clock or Call/Recording timer */}
-                <div className="flex items-center gap-1.5 tnum font-semibold text-[15px] tracking-tight whitespace-nowrap">
-                  {dnd && <Moon className="w-3.5 h-3.5 text-white/85 fill-white/85" />}
-                  {screenRecording ? (
-                    <span className="text-[#ff453a]">
-                      {formatTimerMs(recordSeconds * 1000)}
-                    </span>
-                  ) : callActive ? (
-                    <span className="text-[#30d158]">
-                      {formatTimerMs(callSeconds * 1000)}
-                    </span>
+        ws.onerror = () => {
+          setLiveConnected(false);
+        };
+
+        ws.onclose = () => {
+          setLiveConnected(false);
+        };
+      } catch {
+        // Fallback to SpeechRecognition if WS fails
+      }
+
+      // 2. Capture 16kHz Microphone Audio Stream & Stream PCM chunks to Gemini 3.8 Live WS
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices
+          .getUserMedia({
+            audio: {
+              sampleRate: 16000,
+              channelCount: 1,
+              echoCancellation: true,
+              noiseSuppression: true,
+            },
+          })
+          .then((stream) => {
+            micStreamRef.current = stream;
+            const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+            if (!AudioCtx) return;
+            const inCtx = new AudioCtx({ sampleRate: 16000 });
+            inputAudioCtxRef.current = inCtx;
+            const source = inCtx.createMediaStreamSource(stream);
+            const processor = inCtx.createScriptProcessor(2048, 1, 1);
+            scriptProcessorRef.current = processor;
+
+            processor.onaudioprocess = (e) => {
+              const inputData = e.inputBuffer.getChannelData(0);
+              // Update real-time microphone RMS energy for BotCanvas
+              let sum = 0;
+              for (let i = 0; i < inputData.length; i += 4) {
+                sum += inputData[i] * inputData[i];
+              }
+              const rms = Math.sqrt(sum / (inputData.length / 4));
+              setVoiceEnergy(Math.min(1, Math.max(0.12, rms * 6.5)));
+
+              if (liveWsRef.current && liveWsRef.current.readyState === WebSocket.OPEN) {
+                const base64Pcm = float32ToPcm16Base64(inputData);
+                liveWsRef.current.send(JSON.stringify({ audio: base64Pcm }));
+              }
+            };
+
+            source.connect(processor);
+            processor.connect(inCtx.destination);
+          })
+          .catch(() => {
+            setVoiceStatusHint('Mikrofon belum diizinkan di browser — izinkan akses mikrofon atau ketik langsung.');
+          });
+      }
+
+      // 3. Parallel Browser SpeechRecognition for live local transcript & Search-Grounded action fallback
+      const SpeechRec =
+        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+      if (SpeechRec) {
+        try {
+          const rec = new SpeechRec();
+          speechRecRef.current = rec;
+          rec.lang = voiceLang;
+          rec.interimResults = true;
+          rec.continuous = true;
+          rec.maxAlternatives = 1;
+
+          let latestCombinedTranscript = '';
+          let submitted = false;
+
+          const submitFallbackIfLiveSilent = (textToSubmit: string) => {
+            if (submitted) return;
+            const cleaned = textToSubmit.trim();
+            if (!cleaned) return;
+            // If Gemini 3.8 Live already responded with audio/transcription, execute local command only
+            if (wsConnected && liveOutputAccRef.current.trim().length > 0) {
+              executeIslandCommand(cleaned);
+              return;
+            }
+            submitted = true;
+            stopVoiceRecognition();
+            handleAskGeminiRef.current(cleaned);
+          };
+
+          rec.onresult = (event: any) => {
+            let finalPart = '';
+            let interimPart = '';
+            for (let i = 0; i < event.results.length; i++) {
+              const res = event.results[i];
+              const t = res?.[0]?.transcript || '';
+              if (res.isFinal) {
+                finalPart += t + ' ';
+              } else {
+                interimPart += t;
+              }
+            }
+            const combined = (finalPart + interimPart).trim();
+            if (combined) {
+              latestCombinedTranscript = combined;
+              setAgentTranscript(combined);
+              setAssistantInput(combined);
+
+              if (voiceSilenceTimerRef.current) {
+                window.clearTimeout(voiceSilenceTimerRef.current);
+              }
+              voiceSilenceTimerRef.current = window.setTimeout(() => {
+                submitFallbackIfLiveSilent(latestCombinedTranscript);
+              }, 1250);
+            }
+          };
+
+          rec.onerror = (errEvent: any) => {
+            const errCode = errEvent?.error || '';
+            if (errCode === 'not-allowed' || errCode === 'service-not-allowed') {
+              setVoiceStatusHint('Izin mikrofon diblokir browser — izinkan akses mikrofon di pengaturan situs.');
+            }
+          };
+
+          rec.start();
+        } catch {
+          // ignore
+        }
+      }
+    },
+    [stopVoiceRecognition, voiceLang, voiceListening]
+  );
+
+  // Clean up voice recognition on unmount
+  useEffect(() => {
+    return () => stopVoiceRecognition();
+  }, [stopVoiceRecognition]);
+
+  // ── Global Keyboard Shortcuts (Alt+Q / Alt+I for AI Assistant Toggle + Full Collapse + Auto-Focus Game Capture) ──
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      const inInput = tag === 'INPUT' || tag === 'TEXTAREA';
+
+      // Alt + Q (or Alt + I): Open AI Assistant OR Collapse entire Dynamic Island back to compact notch
+      if ((e.altKey || e.metaKey) && (e.key.toLowerCase() === 'q' || e.key.toLowerCase() === 'i')) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.repeat) return; // Chaos Guard: Holding Alt+Q won't flicker the Assistant
+        setActiveAlert(null);
+        setSettingsOpen(false);
+
+        if (assistantOpen) {
+          // Pressing Alt+Q while AI is already open collapses the ENTIRE Dynamic Island back to compact notch!
+          closeAssistantAndCollapse();
+        } else {
+          setShowAllChatHistory(false);
+          setAssistantOpen(true);
+          setAssistantMode(defaultAltQMode);
+          setIsPinnedOpen(true);
+          if (defaultAltQMode === 'conversation') {
+            stopVoiceRecognition();
+            setTimeout(() => assistantInputRef.current?.focus(), 40);
+          } else {
+            setTimeout(() => startBrowserVoiceRecognition(true), 30);
+          }
+        }
+        return;
+      }
+
+      if (e.key === 'Escape') {
+        if (assistantLoading) {
+          cancelInFlightGemini();
+          return;
+        }
+        if (activeAlert) {
+          setActiveAlert(null);
+        } else if (assistantOpen) {
+          closeAssistantAndCollapse();
+        } else {
+          setIsPinnedOpen(false);
+          setIsHovered(false);
+          setDragAutoOpened(false);
+          setLyricsMode(false);
+          setSettingsOpen(false);
+        }
+        return;
+      }
+
+      // AUTO-FOCUS GAME GUARD: When Assistant is open, any printable keystroke automatically
+      // focuses the AI input box so the user never types into a background game!
+      if (
+        assistantOpen &&
+        !inInput &&
+        e.key.length === 1 &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        stopVoiceRecognition();
+        if (assistantMode !== 'conversation') {
+          setAssistantMode('conversation');
+        }
+        setBotForm('typing');
+        setAssistantInput((prev) => (prev + e.key).slice(0, 1000));
+        setTimeout(() => assistantInputRef.current?.focus(), 10);
+        return;
+      }
+
+      if (e.key === 'CapsLock') {
+        if (e.repeat) return;
+        const nextCaps = !capsLockOn;
+        setCapsLockOn(nextCaps);
+        triggerAlert('capslock', { capsOn: nextCaps });
+        return;
+      }
+
+      if (e.key === 'AudioVolumeMute' || (!inInput && !assistantOpen && e.key.toLowerCase() === 'm')) {
+        if (e.repeat) return;
+        e.preventDefault();
+        const nextMuted = !muted;
+        setMuted(nextMuted);
+        triggerAlert('mute', { value: nextMuted ? 0 : volume, muted: nextMuted });
+        return;
+      }
+
+      // Windows Native Volume Step: +2 per click/press, max 100
+      if (e.key === 'AudioVolumeUp' || (!inInput && !assistantOpen && e.key === ']')) {
+        e.preventDefault();
+        setMuted(false);
+        setVolume((v) => {
+          const next = Math.min(100, v + 2);
+          if (v === 100) setNudgeCount((c) => c + 1);
+          triggerAlert('volume', { value: next, muted: false });
+          return next;
+        });
+        return;
+      }
+
+      // Windows Native Volume Step: -2 per click/press, min 0
+      if (e.key === 'AudioVolumeDown' || (!inInput && !assistantOpen && e.key === '[')) {
+        e.preventDefault();
+        setVolume((v) => {
+          const next = Math.max(0, v - 2);
+          if (v === 0) setNudgeCount((c) => c + 1);
+          setMuted(next === 0);
+          triggerAlert('volume', { value: next, muted: next === 0 });
+          return next;
+        });
+        return;
+      }
+
+      // Laptop Brightness Up: +1 per press, max 10 (Supports BrightnessUp key, F2/F7, Alt+ArrowUp, or B)
+      if (
+        e.key === 'BrightnessUp' ||
+        e.code === 'BrightnessUp' ||
+        (e as any).keyCode === 253 ||
+        (!inInput &&
+          !assistantOpen &&
+          (e.key === 'F2' ||
+            e.key === 'F7' ||
+            e.key.toLowerCase() === 'b' ||
+            (e.altKey && e.key === 'ArrowUp')))
+      ) {
+        e.preventDefault();
+        setBrightness((b) => {
+          const next = Math.min(10, b + 1);
+          if (b === 10) setNudgeCount((c) => c + 1);
+          triggerAlert('brightness', { value: next });
+          return next;
+        });
+        return;
+      }
+
+      // Laptop Brightness Down: -1 per press, min 0 (Supports BrightnessDown key, F1/F6, Alt+ArrowDown, or V)
+      if (
+        e.key === 'BrightnessDown' ||
+        e.code === 'BrightnessDown' ||
+        (e as any).keyCode === 252 ||
+        (!inInput &&
+          !assistantOpen &&
+          (e.key === 'F1' ||
+            e.key === 'F6' ||
+            e.key.toLowerCase() === 'v' ||
+            (e.altKey && e.key === 'ArrowDown')))
+      ) {
+        e.preventDefault();
+        setBrightness((b) => {
+          const next = Math.max(0, b - 1);
+          if (b === 0) setNudgeCount((c) => c + 1);
+          triggerAlert('brightness', { value: next });
+          return next;
+        });
+        return;
+      }
+    };
+
+    const onGlobalMouseDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && target.closest('#dynamic-island-surface')) return;
+      if (lyricsMode) return;
+      if (isExpanded && !assistantOpen) {
+        setIsPinnedOpen(false);
+        setIsHovered(false);
+        setDragAutoOpened(false);
+        setIsDragOver(false);
+        setSettingsOpen(false);
+      }
+    };
+
+    const unsubscribeElectronShortcut = window.electronAPI?.onToggleAssistant?.(() => {
+      setActiveAlert(null);
+      setSettingsOpen(false);
+      if (assistantOpen) {
+        closeAssistantAndCollapse();
+        setDesktopClickThrough(true);
+      } else {
+        setDesktopClickThrough(false);
+        setShowAllChatHistory(false);
+        setAssistantOpen(true);
+        setAssistantMode(defaultAltQMode);
+        setIsPinnedOpen(true);
+        if (defaultAltQMode === 'conversation') {
+          stopVoiceRecognition();
+          setTimeout(() => assistantInputRef.current?.focus(), 40);
+        } else {
+          setTimeout(() => startBrowserVoiceRecognition(true), 30);
+        }
+      }
+    });
+
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('mousedown', onGlobalMouseDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('mousedown', onGlobalMouseDown);
+      unsubscribeElectronShortcut?.();
+    };
+  }, [
+    activeAlert,
+    assistantLoading,
+    assistantMode,
+    assistantOpen,
+    cancelInFlightGemini,
+    capsLockOn,
+    closeAssistantAndCollapse,
+    defaultAltQMode,
+    isExpanded,
+    lyricsMode,
+    muted,
+    setDesktopClickThrough,
+    startBrowserVoiceRecognition,
+    stopVoiceRecognition,
+    triggerAlert,
+    volume,
+  ]);
+
+  // ── Carousel Navigation Handlers (Trigger Dual-Layer Simultaneous Slide) ──
+  const goPrevPage = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setLyricsMode(false);
+    navigateToPage(pageIndex - 1, 'left');
+  };
+
+  const goNextPage = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setLyricsMode(false);
+    navigateToPage(pageIndex + 1, 'right');
+  };
+
+  const selectTabPage = (idx: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (idx === pageIndex) return;
+    setLyricsMode(false);
+    navigateToPage(idx, idx > pageIndex ? 'right' : 'left');
+  };
+
+  // ── Tightened Island Target Dimensions ──
+  const { targetW, targetH, targetR, targetS, tintStyle, tintRgb } = useMemo(() => {
+    if (activeAlert) {
+      if (
+        activeAlert.type === 'volume' ||
+        activeAlert.type === 'mute' ||
+        activeAlert.type === 'brightness'
+      ) {
+        return {
+          targetW: 310,
+          targetH: 36,
+          targetR: 15,
+          targetS: 10,
+          tintStyle: 'none' as const,
+          tintRgb: [0.2, 0.5, 0.95] as [number, number, number],
+        };
+      }
+      if (activeAlert.type === 'capslock') {
+        return {
+          targetW: 246,
+          targetH: 36,
+          targetR: 15,
+          targetS: 10,
+          tintStyle: 'none' as const,
+          tintRgb: [0.2, 0.5, 0.95] as [number, number, number],
+        };
+      }
+      if (activeAlert.type === 'charging' || activeAlert.type === 'lowbattery') {
+        return {
+          targetW: 320,
+          targetH: 54,
+          targetR: 22,
+          targetS: 12,
+          tintStyle: 'none' as const,
+          tintRgb: [0.19, 0.82, 0.35] as [number, number, number],
+        };
+      }
+      if (activeAlert.type === 'permission') {
+        return {
+          targetW: 396,
+          targetH: 104,
+          targetR: 26,
+          targetS: 15,
+          tintStyle: 'glow' as const,
+          tintRgb: [0.85, 0.55, 0.18] as [number, number, number],
+        };
+      }
+      if (activeAlert.type === 'alarm') {
+        return {
+          targetW: 420,
+          targetH: 64,
+          targetR: 24,
+          targetS: 14,
+          tintStyle: 'glow' as const,
+          tintRgb: [1, 0.6, 0.1] as [number, number, number],
+        };
+      }
+      return {
+        targetW: 384,
+        targetH: 56,
+        targetR: 22,
+        targetS: 13,
+        tintStyle: 'none' as const,
+        tintRgb: [0.2, 0.5, 0.95] as [number, number, number],
+      };
+    }
+
+    if (!isExpanded) {
+      return {
+        targetW: 156,
+        targetH: 32,
+        targetR: 14,
+        targetS: 9,
+        tintStyle: 'none' as const,
+        tintRgb: [0.2, 0.5, 0.95] as [number, number, number],
+      };
+    }
+
+    if (assistantOpen) {
+      if (assistantMode === 'voice-pill') {
+        return {
+          targetW: 410,
+          targetH: 100,
+          targetR: 24,
+          targetS: 14,
+          tintStyle: 'aura' as const,
+          tintRgb: [0.56, 0.4, 1] as [number, number, number],
+        };
+      }
+      // Sleek Compact AI Width (388px) + Auto-Fitting Height for Full AI Answer + Vision Preview
+      let dynamicAiHeight = pendingImage ? 148 : 112;
+      if (showAllChatHistory) {
+        dynamicAiHeight = 236;
+      } else if (assistantLoading) {
+        dynamicAiHeight = pendingImage ? 146 : 114;
+      } else if (latestAssistantMessage) {
+        const estLines = Math.max(1, Math.ceil(latestAssistantMessage.text.length / 42));
+        const hasSources = Boolean(
+          latestAssistantMessage.searchSources && latestAssistantMessage.searchSources.length > 0
+        );
+        const hasCmdOrFiles = Boolean(
+          latestAssistantMessage.commandCard ||
+            (latestAssistantMessage.foundFiles && latestAssistantMessage.foundFiles.length > 0)
+        );
+        const hasImg = Boolean(latestAssistantMessage.imageUrl || pendingImage);
+        dynamicAiHeight = Math.min(
+          260,
+          Math.max(
+            132,
+            86 +
+              estLines * 17 +
+              (hasSources ? 16 : 0) +
+              (hasCmdOrFiles ? 34 : 0) +
+              (hasImg ? 36 : 0)
+          )
+        );
+      }
+      return {
+        targetW: 388,
+        targetH: dynamicAiHeight,
+        targetR: 24,
+        targetS: 14,
+        tintStyle: 'aura' as const,
+        tintRgb: [0.56, 0.4, 1] as [number, number, number],
+      };
+    }
+
+    // Unified 440x178 base across all 6 standard menus so < and > nav buttons never shift under the cursor,
+    // while Lyrics Mode expands ONLY horizontally (width 440 -> 520) keeping height fixed at 178px
+    if (activePage === 'music' && lyricsMode && !settingsOpen) {
+      return {
+        targetW: 520,
+        targetH: 178,
+        targetR: 34,
+        targetS: 16,
+        tintStyle: activeTrack ? ('wash' as const) : ('none' as const),
+        tintRgb: currentTrack.tintRgb,
+      };
+    }
+
+    return {
+      targetW: 440,
+      targetH: 178,
+      targetR: 34,
+      targetS: 16,
+      tintStyle: activeTrack ? ('wash' as const) : ('none' as const),
+      tintRgb: currentTrack.tintRgb,
+    };
+  }, [
+    activeAlert,
+    isExpanded,
+    assistantOpen,
+    assistantMode,
+    settingsOpen,
+    activePage,
+    lyricsMode,
+    activeTrack,
+    currentTrack.tintRgb,
+    showAllChatHistory,
+    assistantLoading,
+    latestAssistantMessage,
+    pendingImage,
+  ]);
+
+  // ── Live Battery Ring Indicator (Reflects Real Battery % and Charging State — Matches HTML .battery-icon) ──
+  const renderBatteryRing = (size = 15, stroke = 2.2) => {
+    const r = (size - stroke) / 2;
+    const c = 2 * Math.PI * r;
+    const pct = Math.max(0.05, Math.min(1, batteryLevel / 100));
+    const ringColor =
+      batteryLevel < 15 && !isCharging
+        ? '#ff453a'
+        : batteryLevel <= 25 && !isCharging
+        ? '#ff9f0a'
+        : '#1ed760';
+    const trackColor =
+      batteryLevel < 15 && !isCharging
+        ? 'rgba(255, 69, 58, 0.25)'
+        : batteryLevel <= 25 && !isCharging
+        ? 'rgba(255, 159, 10, 0.25)'
+        : 'rgba(30, 215, 96, 0.26)';
+    const boltSize = size >= 20 ? 10 : Math.max(7, size - 7);
+
+    return (
+      <div
+        title={`Battery: ${batteryLevel}% · ${isCharging ? 'Charging' : 'On Battery'}`}
+        className="relative inline-flex items-center justify-center shrink-0"
+      >
+        <svg width={size} height={size} className="-rotate-90">
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            fill="none"
+            stroke={trackColor}
+            strokeWidth={stroke}
+          />
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            fill="none"
+            stroke={ringColor}
+            strokeWidth={stroke}
+            strokeDasharray={c}
+            strokeDashoffset={c * (1 - pct)}
+            strokeLinecap="round"
+            className="transition-all duration-300"
+          />
+        </svg>
+        {isCharging && (
+          <span className="absolute inset-0 flex items-center justify-center">
+            <svg width={boltSize} height={boltSize} viewBox="0 0 24 24" fill="#ffffff">
+              <path d="M13 2L4 14h7l-2 8 9-12h-7l2-8z" />
+            </svg>
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  // ── Reusable Page Renderer (Enables Simultaneous Outgoing + Incoming Carousel Slide Animation) ──
+  const renderPageContent = (pageId: IslandPage) => {
+    switch (pageId) {
+      case 'music': {
+        const isExternalSource = Boolean(activeTrack && activeTrack.sourceType === 'external');
+        const activeShuffleState = isExternalSource ? externalShuffleEnabled : moodShuffleEnabled;
+        const displayHeadline = activeTrack
+          ? lyricsMode
+            ? activeTrack.title
+            : activeTrack.artist &&
+              !activeTrack.title.toLowerCase().includes(activeTrack.artist.toLowerCase())
+            ? `${activeTrack.title} - ${activeTrack.artist}`
+            : activeTrack.title
+          : mediaLoading
+          ? 'Memuat lagu...'
+          : 'Tidak ada media';
+        const displaySub = mediaLoading
+          ? 'Menyiapkan Official Studio Audio & Synced Lyrics...'
+          : activeTrack
+          ? lyricsMode
+            ? activeTrack.artist
+              ? `${activeTrack.artist} - ${activeTrack.title}`
+              : activeTrack.title
+            : isExternalSource && activeTrack.externalApp
+            ? `${activeTrack.artist || activeTrack.title} · ${activeTrack.externalApp}`
+            : activeTrack.artist || activeTrack.title
+          : '';
+        const displayLyricsLines = activeTrack ? parsedLyrics : [];
+        const controlsActive = Boolean(activeTrack);
+
+        return (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className={`relative w-full h-full flex flex-col justify-between select-none transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              lyricsMode ? 'px-[26px] py-[16px]' : 'px-[42px] pt-[12px] pb-[10px]'
+            }`}
+          >
+            {/* Header Waktu & Baterai (.top-bar — Smoothly fades & collapses when entering Lyrics Mode) */}
+            <div
+              className={`flex items-center justify-center gap-[7px] text-[13px] pl-[30px] whitespace-nowrap transition-all duration-400 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                lyricsMode
+                  ? 'max-h-0 opacity-0 -translate-y-2 scale-95 blur-[3px] mb-0 pointer-events-none overflow-hidden'
+                  : 'max-h-[24px] opacity-100 translate-y-0 scale-100 blur-0 mb-[2px]'
+              }`}
+            >
+              {renderBatteryRing(20, 2.5)}
+              <span className="text-[#d1d1d6] font-medium">
+                {headerDateStr} {nowDate.getFullYear()}
+              </span>
+              <span className="text-white font-bold tabular-nums">{timeStr}</span>
+            </div>
+
+            {/* Optional Top-Right Waveform / Queue / FLAC when playing (Fades out smoothly in Lyrics Mode) */}
+            {(activeTrack || flacEnabled || musicQueue.length > 0) && (
+              <div
+                className={`absolute top-[13px] right-[26px] flex items-center gap-1.5 z-10 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                  lyricsMode
+                    ? 'opacity-0 scale-90 blur-[2px] pointer-events-none'
+                    : 'opacity-100 scale-100 blur-0'
+                }`}
+              >
+                {musicQueue.length > 0 && (
+                  <button
+                    onClick={handleNextTrack}
+                    title={`Antrian Lagu (${musicQueue.length}):\n${musicQueue
+                      .map((t, i) => `${i + 1}. ${t.title}${t.artist ? ` - ${t.artist}` : ''}`)
+                      .join('\n')}\n(Klik untuk langsung putar lagu berikutnya)`}
+                    className="px-1.5 py-0.5 rounded bg-white/15 hover:bg-white/25 border border-white/20 text-white text-[8.5px] font-bold tracking-tight cursor-pointer transition tabular-nums"
+                  >
+                    +{musicQueue.length} Antrian
+                  </button>
+                )}
+                {(flacEnabled || activeTrack?.isFlac) && (
+                  <span
+                    onClick={() => setSettingsOpen(true)}
+                    title="FLAC Lossless Audio Active (Click to configure in Settings)"
+                    className="px-1.5 py-0.5 rounded bg-amber-400/20 border border-amber-400/40 text-[#ffd60a] text-[8px] font-bold tracking-wider cursor-pointer hover:bg-amber-400/30 transition"
+                  >
+                    FLAC
+                  </span>
+                )}
+                {activeTrack && (
+                  <button
+                    onClick={handleTogglePlay}
+                    title={isPlaying ? 'Pause music' : 'Play music'}
+                    className="text-white/95 hover:text-white transition"
+                  >
+                    <EqualizerBarsSvg
+                      size={14}
+                      playing={isPlaying && !muted && volume > 0}
+                      bands={audioBands}
+                    />
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Unified Main Row: Left Music Controls Column + Elastic Right Lyrics Panel */}
+            <div className="flex items-center w-full flex-1 min-h-0">
+              {/* Left Column: Morphs smoothly from 100% width in normal mode to 222px in Lyrics Mode */}
+              <div
+                className={`flex flex-col justify-between transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                  lyricsMode ? 'w-[222px] shrink-0 h-full py-1' : 'w-full'
+                }`}
+              >
+                {/* Album Art & Teks (.media-info) */}
+                <div
+                  className={`flex items-center w-full transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                    lyricsMode ? 'gap-[14px] mt-0 mb-[10px]' : 'gap-[18px] -mt-[10px] mb-[12px]'
+                  }`}
+                >
+                  {activeTrack?.coverUrl ? (
+                    <img
+                      src={activeTrack.coverUrl}
+                      alt={activeTrack.title}
+                      className={`object-cover shrink-0 shadow-md transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                        lyricsMode
+                          ? 'w-[56px] h-[56px] rounded-[13px]'
+                          : 'w-[66px] h-[66px] rounded-[14px]'
+                      }`}
+                    />
                   ) : (
-                    <span>{formatClock(nowDate)}</span>
-                  )}
-                  {pomoPhase !== Phase.Idle && isPlaying && (
-                    <span
-                      className={`ml-1 ${
-                        pomoPhase === Phase.Focus ? 'text-white/90' : 'text-[#30d158]'
+                    <div
+                      className={`bg-[#1c1c1e] flex items-center justify-center shrink-0 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                        lyricsMode
+                          ? 'w-[56px] h-[56px] rounded-[13px]'
+                          : 'w-[66px] h-[66px] rounded-[14px]'
                       }`}
                     >
-                      {formatTimerMs(pomoRemainingMs)}
-                    </span>
-                  )}
-                </div>
-
-                {/* Right slot: muted mic, dancing music bars, timer, or privacy dots */}
-                <div className="flex items-center justify-end gap-1.5 min-w-[24px] shrink-0">
-                  {callActive && callMuted ? (
-                    <MicOff className="w-3.5 h-3.5 text-[#ff453a]" />
-                  ) : isPlaying ? (
-                    <div className="flex items-end gap-[2px] h-3.5">
-                      <span
-                        className="w-[2.5px] bg-white rounded-full"
-                        style={{ animation: 'isleBarDance1 0.75s ease-in-out infinite' }}
-                      />
-                      <span
-                        className="w-[2.5px] bg-white rounded-full"
-                        style={{ animation: 'isleBarDance2 0.65s ease-in-out infinite' }}
-                      />
-                      <span
-                        className="w-[2.5px] bg-white rounded-full"
-                        style={{ animation: 'isleBarDance3 0.85s ease-in-out infinite' }}
-                      />
-                      <span
-                        className="w-[2.5px] bg-white rounded-full"
-                        style={{ animation: 'isleBarDance4 0.7s ease-in-out infinite' }}
-                      />
-                    </div>
-                  ) : pomoPhase !== Phase.Idle ? (
-                    <span className="text-[12px] font-semibold tnum text-white/80">
-                      {formatTimerMs(pomoRemainingMs)}
-                    </span>
-                  ) : null}
-
-                  {/* Privacy Dots */}
-                  {(privacyDots.camera ||
-                    privacyDots.microphone ||
-                    privacyDots.screenShare) && (
-                    <div className="flex items-center gap-1 pl-0.5">
-                      {privacyDots.camera && (
-                        <span
-                          className="w-[7px] h-[7px] rounded-full bg-[#34c759]"
-                          title="Camera in use"
-                        />
-                      )}
-                      {privacyDots.microphone && (
-                        <span
-                          className="w-[7px] h-[7px] rounded-full bg-[#ff9f0a]"
-                          title="Microphone in use"
-                        />
-                      )}
-                      {privacyDots.screenShare && (
-                        <span
-                          className="w-[7px] h-[7px] rounded-full bg-[#0a84ff]"
-                          title="Screen sharing active"
-                        />
-                      )}
+                      <svg
+                        width={lyricsMode ? 26 : 32}
+                        height={lyricsMode ? 26 : 32}
+                        viewBox="0 0 24 24"
+                        fill="#555558"
+                        className="transition-all duration-500"
+                      >
+                        <path d="M20 3L9 5v10.55c-.59-.34-1.27-.55-2-.55-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V9.82l8-1.6v5.33c-.59-.34-1.27-.55-2-.55-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V3z" />
+                      </svg>
                     </div>
                   )}
-                </div>
-              </div>
-            )}
 
-            {/* 2. PEEK (ALERT) PRESENTATION */}
-            {presentation.mode === 'peek' && activeAlert && (
-              <div className="w-full h-full flex flex-col justify-end pb-3 px-4">
-                {activeAlert.kind === 'agent-ask' ? (
-                  <div className="flex items-start gap-3.5 pt-2">
-                    <div className="relative shrink-0">
-                      <BotCanvas
-                        size={44}
-                        shape={botShape}
-                        color={botColor}
-                        glowMode={botGlowMode}
-                        form={
-                          activeAlert.answeredState === 'allowed' ||
-                          activeAlert.answeredState === 'always'
-                            ? 'success'
-                            : activeAlert.answeredState === 'denied'
-                            ? 'error'
-                            : 'asking'
-                        }
-                        gestureTrigger={botGesture}
-                      />
-                      <span
-                        className={`absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                          activeAlert.answeredState === 'allowed' ||
-                          activeAlert.answeredState === 'always'
-                            ? 'bg-[#30d158] text-black'
-                            : activeAlert.answeredState === 'denied'
-                            ? 'bg-[#ff453a] text-white'
-                            : 'bg-[#ff9f0a] text-black'
+                  {activeTrack ? (
+                    <div
+                      className={`min-w-0 flex-1 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                        lyricsMode ? 'mt-0' : 'mt-[8px]'
+                      }`}
+                    >
+                      <div
+                        className={`font-bold text-white tracking-[-0.2px] truncate leading-snug transition-all duration-500 ${
+                          lyricsMode ? 'text-[15px]' : 'text-[16px]'
                         }`}
                       >
-                        {activeAlert.answeredState === 'allowed' ||
-                        activeAlert.answeredState === 'always'
-                          ? '✓'
-                          : activeAlert.answeredState === 'denied'
-                          ? '✕'
-                          : '!'}
-                      </span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[13.5px] font-semibold truncate">
-                          {activeAlert.title}
-                        </span>
-                        <span className="text-[11px] text-white/50 shrink-0">
-                          {activeAlert.agentName}
-                        </span>
+                        {displayHeadline}
                       </div>
-                      {activeAlert.codeLine && (
-                        <div className="mt-1 px-2.5 py-1 rounded-md bg-white/10 font-mono text-[11.5px] text-white/90 truncate">
-                          {activeAlert.codeLine}
-                        </div>
-                      )}
-                      {activeAlert.answeredState ? (
-                        <div className="mt-2 text-[12px] font-semibold">
-                          {activeAlert.answeredState === 'allowed' && (
-                            <span className="text-[#30d158]">Allowed</span>
-                          )}
-                          {activeAlert.answeredState === 'always' && (
-                            <span className="text-[#30d158]">Always allowed here</span>
-                          )}
-                          {activeAlert.answeredState === 'denied' && (
-                            <span className="text-[#ff453a]">Denied</span>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="mt-2 flex items-center justify-end gap-2">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setBotGesture({ type: 'shake', id: Date.now() });
-                              setActiveAlert({
-                                ...activeAlert,
-                                answeredState: 'denied',
-                              });
-                              setTimeout(() => setActiveAlert(null), 850);
-                            }}
-                            className="px-3 py-1 rounded-full bg-[#2c2c2e] hover:bg-[#3a3a3c] text-[12px] font-semibold transition"
-                          >
-                            Deny
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setBotGesture({ type: 'hop', id: Date.now() });
-                              setActiveAlert({
-                                ...activeAlert,
-                                answeredState: 'allowed',
-                              });
-                              setTimeout(() => setActiveAlert(null), 850);
-                            }}
-                            className="px-3 py-1 rounded-full bg-[#2c2c2e] hover:bg-[#3a3a3c] text-[12px] font-semibold transition"
-                          >
-                            Allow
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setBotGesture({ type: 'hop', id: Date.now() });
-                              setActiveAlert({
-                                ...activeAlert,
-                                answeredState: 'always',
-                              });
-                              setTimeout(() => setActiveAlert(null), 850);
-                            }}
-                            className="px-3 py-1 rounded-full bg-white text-black hover:bg-white/85 text-[12px] font-semibold transition"
-                          >
-                            Always
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
                       <div
-                        className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 shadow-inner"
-                        style={{ backgroundColor: activeAlert.accentColor }}
+                        className={`text-[#8e8e93] font-medium truncate leading-tight mt-0.5 transition-all duration-500 ${
+                          lyricsMode ? 'text-[12px] text-white/60' : 'text-[12px]'
+                        }`}
                       >
-                        {activeAlert.kind === 'charging' && (
-                          <Zap className="w-4 h-4 text-white fill-white" />
-                        )}
-                        {activeAlert.kind === 'low-battery' && (
-                          <Zap className="w-4 h-4 text-white" />
-                        )}
-                        {activeAlert.kind === 'volume' && (
-                          <Volume2 className="w-4 h-4 text-white" />
-                        )}
-                        {activeAlert.kind === 'brightness' && (
-                          <Sun className="w-4 h-4 text-white" />
-                        )}
-                        {activeAlert.kind === 'capslock' && (
-                          <Keyboard className="w-4 h-4 text-white" />
-                        )}
-                        {activeAlert.kind === 'earbuds' && (
-                          <Headphones className="w-4 h-4 text-white" />
-                        )}
-                        {activeAlert.kind === 'meeting' && (
-                          <Video className="w-4 h-4 text-white" />
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-[13.5px] font-semibold truncate">
-                          {activeAlert.title}
-                        </div>
-                        {activeAlert.subtitle && (
-                          <div className="text-[11.5px] text-white/55 truncate">
-                            {activeAlert.subtitle}
-                          </div>
-                        )}
+                        {displaySub}
                       </div>
                     </div>
-
-                    {/* Right side of Peek Alert */}
-                    <div className="flex items-center gap-2.5 shrink-0">
-                      {activeAlert.level !== undefined && (
-                        <div className="flex items-center gap-2">
-                          <div className="w-20 h-[5px] rounded-full bg-white/20 overflow-hidden">
-                            <div
-                              className="h-full bg-white rounded-full transition-all duration-150"
-                              style={{ width: `${activeAlert.level}%` }}
-                            />
-                          </div>
-                          <span className="text-[12px] font-semibold tnum w-8 text-right">
-                            {activeAlert.level}%
-                          </span>
-                        </div>
-                      )}
-                      {activeAlert.valueText && activeAlert.level === undefined && (
-                        <span
-                          className="text-[18px] font-semibold tnum"
-                          style={{ color: activeAlert.accentColor }}
-                        >
-                          {activeAlert.valueText}
-                        </span>
-                      )}
-                      {activeAlert.kind === 'meeting' && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setActiveAlert(null);
-                            setCallService('Google Meet');
-                            setCallActive(true);
-                            setCallSeconds(1);
-                            setActivePage('call');
-                            setPinnedOpen(true);
-                          }}
-                          className="px-3.5 py-1 rounded-full bg-[#0a84ff] hover:bg-[#2b95ff] text-white text-[12px] font-semibold transition"
-                        >
-                          Join
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* 3. VOICE ASSISTANT PRESENTATION */}
-            {presentation.mode === 'voice' && (
-              <div
-                className="w-full h-full flex flex-col justify-between px-4 pb-3.5"
-                style={{ paddingTop: topBarHeight + 6 }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* Optional Expanded Conversation History */}
-                {chatExpanded && (
-                  <div className="flex-1 flex flex-col min-h-0 mb-2 border-b border-white/10 pb-2">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-[12px] font-semibold text-white/45">
-                        Conversation · ~/.local/share/isle/chat.json
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() =>
-                            setChatHistory([
-                              {
-                                id: Date.now(),
-                                userText: '',
-                                steps: [],
-                                replyText: 'Started a new conversation. How can I help?',
-                                timestamp: formatClock(new Date()),
-                              },
-                            ])
-                          }
-                          className="p-1 rounded-full bg-white/10 hover:bg-white/20 text-white/80"
-                          title="Start new conversation (+)"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => setChatExpanded(false)}
-                          className="p-1 rounded-full bg-white/10 hover:bg-white/20 text-white/80"
-                          title="Collapse conversation"
-                        >
-                          <ChevronDown className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto no-scrollbar space-y-2.5 pr-1">
-                      {chatHistory.map((turn) => (
-                        <div key={turn.id} className="space-y-1.5">
-                          {turn.userText && (
-                            <div className="flex justify-end">
-                              <div className="px-3 py-1.5 rounded-2xl bg-white/12 text-[12.5px] max-w-[80%]">
-                                {turn.userText}
-                              </div>
-                            </div>
-                          )}
-                          {turn.steps.length > 0 && (
-                            <div className="pl-2 space-y-0.5">
-                              {turn.steps.map((st, idx) => (
-                                <div
-                                  key={idx}
-                                  className="flex items-center gap-1.5 text-[11px] text-white/45"
-                                >
-                                  <Check className="w-3 h-3 text-white/45" />
-                                  <span>{st}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          <div className="text-[12.5px] text-white/90 leading-snug">
-                            {turn.replyText}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Active Assistant Row */}
-                <div className="flex items-start gap-3">
-                  <div
-                    onClick={() =>
-                      setBotGesture({
-                        type: 'hop',
-                        id: Date.now(),
-                      })
-                    }
-                    className="cursor-pointer"
-                    title="Click the bot to hop"
-                  >
-                    <BotCanvas
-                      size={38}
-                      shape={botShape}
-                      color={botColor}
-                      glowMode={botGlowMode}
-                      form={botForm}
-                      voiceLevel={voiceLevel}
-                      gestureTrigger={botGesture}
-                    />
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <button
-                        onClick={() => setChatExpanded((c) => !c)}
-                        className="flex items-center gap-1 text-[12px] text-white/50 hover:text-white/80 transition truncate"
-                      >
-                        <ChevronUp className="w-3.5 h-3.5 shrink-0" />
-                        <span className="truncate">
-                          {activeTurn?.userText || 'How can I help? (English or Indonesian)'}
-                        </span>
-                      </button>
-                      <span className="text-[11px] text-white/40 shrink-0">
-                        Claude Code · Sonnet
-                      </span>
-                    </div>
-
-                    <div className="text-[14px] font-medium text-white/95 mt-0.5 leading-snug">
-                      {botForm === 'listening' && voiceInputMode === 'listening'
-                        ? 'Listening on this computer (whisper.cpp · Vulkan)...'
-                        : activeTurn?.replyText}
-                    </div>
-
-                    {/* Quick Idea Chips */}
-                    {!activeTurn?.commandCard && (
-                      <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                        {[
-                          'Install LibreOffice',
-                          'Play some jazz on Spotify',
-                          'Remind me to review PR #48',
-                          'Why is my laptop slow?',
-                        ].map((idea) => (
-                          <button
-                            key={idea}
-                            onClick={() => handleSendVoicePrompt(idea)}
-                            className="px-2.5 py-0.5 rounded-full bg-white/8 hover:bg-white/15 border border-white/10 text-[11.5px] font-semibold text-white/85 transition"
-                          >
-                            {idea}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Command Approval Card (sudo / package manager) */}
-                    {activeTurn?.commandCard && (
-                      <div className="mt-2.5 space-y-2">
-                        <div className="px-3 py-2 rounded-[10px] bg-white/8 space-y-1">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[12px] font-semibold text-white/90">
-                              {activeTurn.commandCard.purpose}
-                            </span>
-                            {activeTurn.commandCard.status === 'done' && (
-                              <span className="text-[11px] font-semibold text-[#30d158] tnum">
-                                ✓ {activeTurn.commandCard.durationText}
-                              </span>
-                            )}
-                            {activeTurn.commandCard.status === 'denied' && (
-                              <span className="text-[11px] font-semibold text-white/50">
-                                Denied
-                              </span>
-                            )}
-                          </div>
-                          <div className="font-mono text-[12px] text-white flex items-center gap-1.5">
-                            <span className="text-white/45">$</span>
-                            <span className="text-[#ffb340] font-semibold">sudo</span>
-                            <span>
-                              {activeTurn.commandCard.command.replace(/^sudo\s+/, '')}
-                            </span>
-                          </div>
-                          {activeTurn.commandCard.logs &&
-                            activeTurn.commandCard.status === 'running' && (
-                              <div className="pt-1 font-mono text-[11px] text-white/45 space-y-0.5">
-                                {activeTurn.commandCard.logs.map((l, i) => (
-                                  <div key={i}>{l}</div>
-                                ))}
-                              </div>
-                            )}
-                        </div>
-
-                        {activeTurn.commandCard.status === 'pending' && (
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-1.5 text-[12px] font-medium text-[#ffb340]">
-                              <ShieldAlert className="w-3.5 h-3.5" />
-                              <span>{activeTurn.commandCard.riskLabel}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => handleDenyCommandCard(activeTurn.id)}
-                                className="px-3 py-1 rounded-full bg-[#2c2c2e] hover:bg-[#3a3a3c] text-[12px] font-semibold flex items-center gap-1.5"
-                              >
-                                <span>Deny</span>
-                                <span className="text-[10px] text-white/45">esc</span>
-                              </button>
-                              <button
-                                onClick={() => handleRunCommandCard(activeTurn.id)}
-                                className="px-3.5 py-1 rounded-full bg-white text-black hover:bg-white/85 text-[12px] font-semibold flex items-center gap-1.5"
-                              >
-                                <span>Run</span>
-                                <CornerDownLeft className="w-3 h-3 text-black/50" />
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Right Action Button: Keyboard toggle or Close */}
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      onClick={() =>
-                        setVoiceInputMode((m) =>
-                          m === 'listening' ? 'typing' : 'listening'
-                        )
-                      }
-                      className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/80 hover:text-white transition"
-                      title="Switch between voice and keyboard input"
+                  ) : (
+                    <div
+                      title="Tekan Alt + Q untuk meminta AI memutar musik"
+                      className={`font-bold text-white tracking-[-0.2px] truncate transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                        lyricsMode ? 'text-[15px] mt-0' : 'text-[16px] mt-[8px]'
+                      }`}
                     >
-                      {voiceInputMode === 'listening' ? (
-                        <Keyboard className="w-4 h-4" />
-                      ) : (
-                        <Mic className="w-4 h-4" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => setVoiceOpen(false)}
-                      className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/80 hover:text-white transition"
-                      title="Close assistant (Esc)"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
+                      {displayHeadline}
+                    </div>
+                  )}
                 </div>
 
-                {/* Typed Request Pill Field */}
+                {/* Progress Bar (.progress-row — Smoothly morphs width with Left Column) */}
+                <div
+                  className={`flex items-center w-full transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                    lyricsMode ? 'gap-[10px] mb-[8px]' : 'gap-[12px] mb-[10px]'
+                  }`}
+                >
+                  <span
+                    className={`font-medium tracking-[-0.3px] tabular-nums shrink-0 transition-all duration-300 ${
+                      lyricsMode ? 'text-[13px]' : 'text-[14px]'
+                    } ${controlsActive ? 'text-white' : 'text-[#555558]'}`}
+                  >
+                    {formatTrackTime(activeTrack ? positionMs : 0)}
+                  </span>
+                  <div
+                    onClick={(e) => {
+                      if (!activeTrack || !activeTrack.durationMs) return;
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                      const nextMs = Math.floor(ratio * activeTrack.durationMs);
+                      handleSeek(nextMs);
+                    }}
+                    className={`flex-1 h-[5px] rounded-[3px] relative cursor-pointer flex items-center overflow-hidden transition-colors duration-300 ${
+                      controlsActive ? 'bg-white/25' : 'bg-[#242426]'
+                    }`}
+                  >
+                    {activeTrack && activeTrack.durationMs > 0 && (
+                      <div
+                        className="h-full bg-white rounded-[3px] transition-[width] duration-75 ease-linear"
+                        style={{
+                          width: `${Math.min(100, (positionMs / activeTrack.durationMs) * 100)}%`,
+                        }}
+                      />
+                    )}
+                  </div>
+                  <span
+                    className={`font-medium tracking-[-0.3px] tabular-nums shrink-0 transition-all duration-300 ${
+                      lyricsMode ? 'text-[13px]' : 'text-[14px]'
+                    } ${controlsActive ? 'text-white' : 'text-[#555558]'}`}
+                  >
+                    {activeTrack
+                      ? formatTrackTime(Math.max(0, activeTrack.durationMs - positionMs), true)
+                      : '-00:00'}
+                  </span>
+                </div>
+
+                {/* Tombol Kontrol (.controls-row — Glides smoothly with Left Column) */}
+                <div
+                  className={`relative flex items-center justify-center w-full transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                    lyricsMode ? 'h-[28px] mb-0' : 'h-[26px] mb-[8px]'
+                  }`}
+                >
+                  <button
+                    onClick={() => {
+                      setIsPinnedOpen(true);
+                      setLyricsMode((prev) => !prev);
+                    }}
+                    className={`absolute flex items-center justify-center cursor-pointer transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] hover:opacity-90 active:scale-90 ${
+                      lyricsMode ? 'left-[4px] text-white' : 'left-[24px]'
+                    }`}
+                    title={lyricsMode ? 'Close Lyrics View' : 'Lyrics'}
+                    aria-label="Lyrics"
+                  >
+                    {lyricsMode ? (
+                      <LyricsQuoteBubbleSvg size={19} active />
+                    ) : (
+                      <svg
+                        width={20}
+                        height={20}
+                        viewBox="0 0 24 24"
+                        fill={activeTrack ? '#ffffff' : '#555558'}
+                        className="transition-colors duration-300"
+                      >
+                        <path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h3v4l4-4h9c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14h-9.83L8 18.17V16H4V4h16v12z" />
+                        <path d="M9.5 8.5h2v2.5L10.3 13H8.8l1.1-2H9.5V8.5zm4 0h2v2.5L14.3 13h-1.5l1.1-2h-.4V8.5z" />
+                      </svg>
+                    )}
+                  </button>
+
+                  <div
+                    className={`flex items-center transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                      lyricsMode ? 'gap-[22px] px-[24px]' : 'gap-[28px] pl-0'
+                    }`}
+                  >
+                    <button
+                      onClick={handlePrevTrack}
+                      className="flex items-center justify-center cursor-pointer transition hover:opacity-85 active:scale-90"
+                      title="Previous / Rewind"
+                      aria-label="Rewind"
+                    >
+                      <svg
+                        width={lyricsMode ? 21 : 22}
+                        height={lyricsMode ? 21 : 22}
+                        viewBox="0 0 24 24"
+                        fill={controlsActive ? '#ffffff' : '#555558'}
+                        className="transition-all duration-300"
+                      >
+                        <path d="M11.5 12l8.5 6V6l-8.5 6zm-9 0l8.5 6V6l-8.5 6z" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={handleTogglePlay}
+                      className="flex items-center justify-center cursor-pointer transition hover:opacity-85 active:scale-95"
+                      title={isPlaying ? 'Pause' : 'Play'}
+                      aria-label="Play"
+                    >
+                      {isPlaying ? (
+                        <svg
+                          width={20}
+                          height={20}
+                          viewBox="0 0 24 24"
+                          fill={controlsActive ? '#ffffff' : '#555558'}
+                          className="transition-all duration-300"
+                        >
+                          <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                        </svg>
+                      ) : (
+                        <svg
+                          width={20}
+                          height={20}
+                          viewBox="0 0 24 24"
+                          fill={controlsActive ? '#ffffff' : '#555558'}
+                          className="transition-all duration-300"
+                        >
+                          <path d="M6 4l15 8-15 8V4z" />
+                        </svg>
+                      )}
+                    </button>
+                    <button
+                      onClick={handleNextTrack}
+                      className="flex items-center justify-center cursor-pointer transition hover:opacity-85 active:scale-90"
+                      title={
+                        isExternalSource
+                          ? `Next Track (${activeTrack?.externalApp || 'External Player'})`
+                          : musicQueue.length > 0
+                          ? `Next in Queue: ${musicQueue[0].title} - ${musicQueue[0].artist}`
+                          : moodShuffleEnabled
+                          ? 'Next (Mood Shuffle Auto-Pick)'
+                          : 'Next / Skip Track'
+                      }
+                      aria-label="Fast Forward"
+                    >
+                      <svg
+                        width={lyricsMode ? 21 : 22}
+                        height={lyricsMode ? 21 : 22}
+                        viewBox="0 0 24 24"
+                        fill={controlsActive || musicQueue.length > 0 ? '#ffffff' : '#555558'}
+                        className="transition-all duration-300"
+                      >
+                        <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {/* Source-Aware Shuffle Toggle Button (Controls External App Shuffle OR Internal AI Mood Shuffle) */}
+                  <button
+                    onClick={handleToggleShuffle}
+                    className={`absolute flex items-center justify-center cursor-pointer transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] hover:opacity-95 active:scale-90 ${
+                      lyricsMode ? 'right-[4px]' : 'right-[24px]'
+                    }`}
+                    title={
+                      isExternalSource
+                        ? `${activeTrack?.externalApp || 'External'} Shuffle: ${
+                            activeShuffleState ? 'ON' : 'OFF'
+                          } (Klik untuk toggle shuffle di ${
+                            activeTrack?.externalApp || 'aplikasi eksternal'
+                          })`
+                        : activeShuffleState
+                        ? 'AI Mood Shuffle: ON (Otomatis putar lagu sesuai mood saat lagu habis · Klik untuk matikan)'
+                        : 'AI Mood Shuffle: OFF (Klik untuk aktifkan auto-shuffle sesuai mood lagu)'
+                    }
+                    aria-label="Toggle Shuffle"
+                  >
+                    <svg
+                      width={lyricsMode ? 17 : 18}
+                      height={lyricsMode ? 17 : 18}
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke={activeShuffleState ? '#ffffff' : '#555558'}
+                      strokeWidth={2.2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="transition-colors duration-300"
+                    >
+                      <polyline points="16 3 21 3 21 8" />
+                      <line x1="4" y1="20" x2="21" y2="3" />
+                      <polyline points="21 16 21 21 16 21" />
+                      <line x1="15" y1="15" x2="21" y2="21" />
+                      <line x1="4" y1="4" x2="9" y2="9" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* Right Column: Divider + Synced Lyrics Panel (Smoothly slides, scales & unblurs on toggle) */}
+              <div
+                className={`flex items-center h-full transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                  lyricsMode
+                    ? 'flex-1 opacity-100 translate-x-0 scale-100 blur-0 ml-[18px] pointer-events-auto'
+                    : 'w-0 opacity-0 translate-x-7 scale-95 blur-[6px] ml-0 pointer-events-none overflow-hidden'
+                }`}
+              >
+                <div className="w-[1px] h-[86%] bg-white/15 shrink-0 mr-[18px]" />
+
+                <div
+                  ref={lyricsContainerRef}
+                  style={{
+                    WebkitMaskImage:
+                      'linear-gradient(to bottom, transparent 0%, black 16%, black 84%, transparent 100%)',
+                    maskImage:
+                      'linear-gradient(to bottom, transparent 0%, black 16%, black 84%, transparent 100%)',
+                  }}
+                  className="flex-1 h-[146px] overflow-y-auto no-scrollbar scroll-smooth space-y-3 pr-1 py-8 flex flex-col justify-start min-w-[215px]"
+                >
+                  {mediaLoading ? (
+                    <div className="text-white/55 text-[13px] font-medium my-auto text-center animate-pulse">
+                      Memuat lirik...
+                    </div>
+                  ) : !activeTrack ? (
+                    <div className="my-auto flex flex-col items-center justify-center text-center px-2 select-none">
+                      <span className="text-white/45 text-[13px] font-semibold tracking-tight">
+                        Belum ada musik diputar
+                      </span>
+                      <span className="text-white/25 text-[11px] font-medium mt-1">
+                        Tekan Alt + Q untuk memutar lagu
+                      </span>
+                    </div>
+                  ) : displayLyricsLines.length === 0 ? (
+                    <div className="text-white/40 text-[12.5px] font-medium my-auto text-center px-2">
+                      Lirik belum tersedia
+                    </div>
+                  ) : (
+                    displayLyricsLines.map((line, idx) => {
+                      const effectiveActiveIdx =
+                        activeLineIndex >= 0 ? activeLineIndex : 0;
+                      const isCurrent = idx === effectiveActiveIdx;
+                      const distance = Math.abs(idx - effectiveActiveIdx);
+
+                      return (
+                        <div
+                          key={idx}
+                          ref={isCurrent ? activeLyricLineRef : null}
+                          onClick={() => handleSeek(line.timeMs)}
+                          className={`cursor-pointer transition-all duration-300 ease-out origin-left select-none leading-snug ${
+                            isCurrent
+                              ? 'text-[15px] font-bold text-white opacity-100 scale-[1.02] translate-x-0.5 py-0.5'
+                              : distance === 1
+                              ? 'text-white/45 text-[13.5px] font-semibold hover:text-white/75'
+                              : 'text-white/25 text-[12.5px] font-medium hover:text-white/50'
+                          }`}
+                          title="Klik untuk melompat ke baris lirik ini"
+                        >
+                          {isCurrent && line.words && line.words.length > 0 ? (
+                            <span className="inline-flex flex-wrap gap-x-1">
+                              {line.words.map((w, wIdx) => {
+                                const isWordSung = positionMs >= w.startMs;
+                                return (
+                                  <span
+                                    key={wIdx}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleSeek(w.startMs);
+                                    }}
+                                    className={`transition-all duration-150 cursor-pointer ${
+                                      isWordSung
+                                        ? 'text-white translate-y-[-0.5px]'
+                                        : 'text-white/40'
+                                    }`}
+                                  >
+                                    {w.word}
+                                  </span>
+                                );
+                              })}
+                            </span>
+                          ) : (
+                            <span>{line.text}</span>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Indikator Slide (.pagination — Smoothly fades & collapses in Lyrics Mode) */}
+            <div
+              className={`flex items-center justify-center gap-[5px] w-full transition-all duration-400 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                lyricsMode
+                  ? 'max-h-0 opacity-0 translate-y-2 pointer-events-none overflow-hidden'
+                  : 'max-h-[10px] opacity-100 translate-y-0'
+              }`}
+            >
+              {ISLAND_PAGES.map((p, idx) => {
+                const isActive = idx === pageIndex;
+                return (
+                  <button
+                    key={p.id}
+                    onClick={(e) => selectTabPage(idx, e)}
+                    className={`h-[4px] transition-all duration-300 ${
+                      isActive
+                        ? 'w-[17px] bg-white rounded-[3px]'
+                        : 'w-[4px] bg-[#555558] rounded-full hover:bg-white/60'
+                    }`}
+                    title={p.label}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        );
+      }
+
+      case 'notifications':
+        return (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full h-full flex flex-col justify-between px-9 py-1 overflow-hidden"
+          >
+            {/* Compact Top Action & Reminder Creator Row (Fits cleanly without clipping) */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const text = newNotifInput.trim();
+                if (!text) return;
+                const parts = text.split(' - ');
+                const title = parts[0]?.trim() || text;
+                const sub = parts.slice(1).join(' - ').trim() || `Pengingat pukul ${timeStr}`;
+                pushRealNotification(title, sub, 'message');
+                setNewNotifInput('');
+              }}
+              className="flex items-center gap-1.5 shrink-0"
+            >
+              <input
+                type="text"
+                value={newNotifInput}
+                onChange={(e) => setNewNotifInput(e.target.value)}
+                placeholder="Tambah pengingat cepat (misal: Scrim - 20:00)..."
+                className="flex-1 min-w-0 bg-white/[0.06] border border-white/10 focus:border-white/25 rounded-full px-3 py-1 text-[10.5px] text-white placeholder-white/35 focus:outline-none"
+              />
+              <button
+                type="submit"
+                className="px-2.5 py-1 rounded-full bg-white text-black hover:bg-white/90 text-[10px] font-bold shrink-0 transition"
+              >
+                + Notify
+              </button>
+              <button
+                type="button"
+                onClick={() => setDndEnabled((d) => !d)}
+                title={dndEnabled ? 'Disable Do Not Disturb' : 'Enable Do Not Disturb'}
+                className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 transition ${
+                  dndEnabled
+                    ? 'bg-[#5e5ce6] text-white'
+                    : 'bg-white/[0.08] hover:bg-white/15 text-white/75'
+                }`}
+              >
+                {dndEnabled ? <MoonFilledSvg size={11} /> : <BellOutlineSvg size={11} />}
+              </button>
+              {notifications.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setNotifications([])}
+                  className="px-2 py-1 rounded-full bg-white/10 hover:bg-white/20 text-white/80 text-[10px] font-medium shrink-0 transition"
+                >
+                  Clear
+                </button>
+              )}
+            </form>
+
+            {notifications.length === 0 ? (
+              <div className="flex-1 min-h-0 flex items-center justify-center gap-2 text-white/40 text-[11px]">
+                <BellOutlineSvg size={13} />
+                <span className="truncate">
+                  {dndEnabled ? 'Do Not Disturb aktif · ' : ''}Belum ada notifikasi baru
+                </span>
+              </div>
+            ) : (
+              <div className="flex-1 min-h-0 flex flex-col justify-start space-y-1 overflow-y-auto no-scrollbar pt-1.5">
+                {notifications.map((n) => (
+                  <div
+                    key={n.id}
+                    className="group flex items-center justify-between gap-2 px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] transition shrink-0"
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <div className="w-4 h-4 rounded bg-white/10 text-white/85 flex items-center justify-center shrink-0">
+                        {n.iconType === 'calendar' && <CalendarGridSvg size={10} />}
+                        {n.iconType === 'download' && <ShelfTraySvg size={10} />}
+                        {n.iconType === 'message' && <MessageBubbleSvg size={10} />}
+                      </div>
+                      <div className="flex items-baseline gap-1.5 min-w-0 flex-1">
+                        <span className="text-[11px] font-bold text-white shrink-0">
+                          {n.title}
+                        </span>
+                        <span className="text-[10.5px] text-white/60 truncate flex-1">
+                          {n.subtitle}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="shrink-0 flex items-center gap-1.5">
+                      <span className="text-[10px] text-white/40 tabular-nums">
+                        {n.timeAgo}
+                      </span>
+                      <button
+                        onClick={() =>
+                          setNotifications((prev) => prev.filter((item) => item.id !== n.id))
+                        }
+                        className="p-0.5 text-white/45 hover:text-white transition"
+                        title="Dismiss notification"
+                      >
+                        <CloseCrossSvg size={9} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+
+      case 'pomodoro': {
+        const isFocus = pomoMode === 'focus';
+
+        return (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full h-full flex flex-col justify-center items-center gap-3 px-6 py-2"
+          >
+            {/* Center Section: Centered Left Glowing Red Badge, Big Timer & Reset, Subtitle */}
+            <div className="flex items-center justify-center gap-6 px-1 w-full">
+              {/* Left Glowing Red Circular Stopwatch Badge */}
+              <div
+                onClick={() => setPomoRunning((r) => !r)}
+                title={pomoRunning ? 'Pause' : 'Start'}
+                className="relative w-14 h-14 rounded-full border-[3px] border-[#ff453a] shadow-[0_0_22px_rgba(255,69,58,0.7)] bg-[#1d0e12] flex items-center justify-center shrink-0 cursor-pointer active:scale-95 transition"
+              >
+                <TimerStopwatchSvg size={28} className="text-white drop-shadow-sm" />
+              </div>
+
+              {/* Big Digital Countdown + Reset Reload Button + Subtitle */}
+              <div className="flex flex-col items-start justify-center">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-[36px] font-bold text-white tabular-nums tracking-tight leading-none">
+                    {formatPomoTime(pomoRemainingSeconds)}
+                  </span>
+                  <button
+                    onClick={() => {
+                      setPomoRunning(false);
+                      setPomoRemainingSeconds(pomoTotalSeconds);
+                    }}
+                    title="Reset Timer"
+                    className="text-white/65 hover:text-white transition active:rotate-180 duration-300"
+                  >
+                    <RotateResetSvg size={17} />
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[12px] text-white/50 font-normal">
+                    {isFocus ? 'Focus time' : 'Break time'}
+                  </span>
+                  {pomoSessionsCompleted > 0 && (
+                    <span className="text-[10.5px] px-2 py-0.5 rounded-full bg-white/10 text-white/70">
+                      Sesi: {pomoSessionsCompleted}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom Row: [ Short Break ], [ ▶ ] Red Pill, [ Focus Time ] */}
+            <div className="flex items-center justify-center gap-3 pt-1">
+              <button
+                onClick={() => {
+                  setPomoRunning(false);
+                  setPomoMode('break');
+                  setPomoTotalSeconds(5 * 60);
+                  setPomoRemainingSeconds(5 * 60);
+                }}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11.5px] font-medium border transition ${
+                  pomoMode === 'break'
+                    ? 'bg-white/20 border-white/40 text-white shadow-sm'
+                    : 'bg-white/[0.08] hover:bg-white/14 border-white/[0.06] text-white/80 hover:text-white'
+                }`}
+              >
+                <CoffeeCupSvg size={13} className="text-white/85" />
+                <span>Short Break</span>
+              </button>
+
+              <button
+                onClick={() => setPomoRunning((r) => !r)}
+                className="w-14 h-8 rounded-full bg-[#ff4d4f] hover:bg-[#ff383b] text-white flex items-center justify-center shadow-lg shadow-rose-500/35 transition active:scale-95 shrink-0"
+                title={pomoRunning ? 'Pause' : 'Start'}
+              >
+                {pomoRunning ? <PauseFilledSvg size={16} /> : <PlayFilledSvg size={16} />}
+              </button>
+
+              <button
+                onClick={() => {
+                  setPomoRunning(false);
+                  setPomoMode('focus');
+                  setPomoTotalSeconds(25 * 60);
+                  setPomoRemainingSeconds(25 * 60);
+                }}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11.5px] font-medium border transition ${
+                  pomoMode === 'focus'
+                    ? 'bg-white/20 border-white/40 text-white shadow-sm'
+                    : 'bg-white/[0.08] hover:bg-white/14 border-white/[0.06] text-white/80 hover:text-white'
+                }`}
+              >
+                <TargetFocusSvg size={13} className="text-white/85" />
+                <span>Focus Time</span>
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      case 'todolist':
+        return (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full h-full flex items-center justify-between px-10 py-1 gap-5"
+          >
+            <div className="flex flex-col justify-between h-full py-1">
+              <div>
+                <div className="text-[28px] font-bold tracking-tight text-white leading-none tabular-nums">
+                  {completedCount}/{tasks.length}
+                </div>
+                <div className="text-[11px] text-white/45 font-medium mt-1">
+                  Tasks Completed
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => {
+                    if (!addingTask) {
+                      const next30 = new Date(Date.now() + 30 * 60 * 1000);
+                      setNewTaskTime(
+                        `${String(next30.getHours()).padStart(2, '0')}:${String(
+                          next30.getMinutes()
+                        ).padStart(2, '0')}`
+                      );
+                    }
+                    setAddingTask((a) => !a);
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/12 hover:bg-white/20 text-white text-[11px] font-medium transition"
+                >
+                  <PlusSvg size={11} />
+                  Add Task
+                </button>
+                {tasks.some((t) => t.done) && (
+                  <button
+                    onClick={() => setTasks((prev) => prev.filter((t) => !t.done))}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/18 text-white/80 text-[11px] font-medium transition"
+                  >
+                    Clear Done
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="w-[260px] h-[104px] rounded-2xl bg-[#121216] border border-white/[0.07] p-2.5 overflow-y-auto no-scrollbar flex flex-col justify-between">
+              <div className="space-y-1.5">
+                {tasks.length === 0 && !addingTask ? (
+                  <div className="text-[11px] text-white/40 py-2 text-center">
+                    Belum ada task · Klik + Add Task untuk atur pengingat
+                  </div>
+                ) : (
+                  tasks.map((task) => (
+                    <div
+                      key={task.id}
+                      onClick={() =>
+                        setTasks((prev) =>
+                          prev.map((t) => (t.id === task.id ? { ...t, done: !t.done } : t))
+                        )
+                      }
+                      className="flex items-center justify-between gap-2 cursor-pointer group"
+                    >
+                      <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                        <div
+                          className={`mt-0.5 w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 transition ${
+                            task.done
+                              ? 'bg-white border-white text-black'
+                              : 'border-white/40 group-hover:border-white/75'
+                          }`}
+                        >
+                          {task.done && <CheckTickSvg size={9} />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div
+                            className={`text-[12px] font-semibold leading-tight truncate ${
+                              task.done ? 'line-through text-white/35' : 'text-white'
+                            }`}
+                          >
+                            {task.title}
+                          </div>
+                          {editingTaskTimeId === task.id ? (
+                            <div
+                              onClick={(ev) => ev.stopPropagation()}
+                              className="mt-0.5 flex items-center gap-1"
+                            >
+                              <input
+                                type="time"
+                                autoFocus
+                                value={task.time || '09:00'}
+                                onChange={(ev) => {
+                                  const nextTime = ev.target.value;
+                                  setTasks((prev) =>
+                                    prev.map((t) =>
+                                      t.id === task.id ? { ...t, time: nextTime } : t
+                                    )
+                                  );
+                                }}
+                                onBlur={() => setEditingTaskTimeId(null)}
+                                onKeyDown={(ev) => {
+                                  if (ev.key === 'Enter' || ev.key === 'Escape') {
+                                    setEditingTaskTimeId(null);
+                                  }
+                                }}
+                                style={{ colorScheme: 'dark' }}
+                                className="bg-white/12 border border-white/20 rounded px-1 py-0.2 text-[10px] text-white tabular-nums focus:outline-none"
+                              />
+                            </div>
+                          ) : (
+                            <div
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                setEditingTaskTimeId(task.id);
+                              }}
+                              title="Klik untuk ubah jam pengingat task ini"
+                              className="text-[10px] text-white/45 hover:text-white/80 font-medium mt-0.5 tabular-nums inline-flex items-center gap-1 transition"
+                            >
+                              <span>{task.time || 'Atur jam'}</span>
+                              {!task.done && task.time && (
+                                <span className="text-[8.5px] text-white/30">· Pengingat aktif</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          setTasks((prev) => prev.filter((t) => t.id !== task.id));
+                        }}
+                        className="opacity-0 group-hover:opacity-100 p-0.5 text-white/40 hover:text-white transition"
+                        title="Delete task"
+                      >
+                        <CloseCrossSvg size={10} />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {addingTask && (
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
-                    handleSendVoicePrompt(voiceQuery);
+                    const raw = newTaskInput.trim().slice(0, 80);
+                    if (!raw) return;
+                    // Support inline time typing (e.g. "Meeting klien 19:30") OR the explicit time picker value
+                    const inlineTimeMatch = raw.match(/^(.*?)\s+(?:jam|pukul|at)?\s*(\d{1,2}[:.]\d{2})$/i);
+                    let finalTitle = raw;
+                    let finalTime = newTaskTime.trim();
+                    if (inlineTimeMatch && inlineTimeMatch[1].trim()) {
+                      finalTitle = inlineTimeMatch[1].trim();
+                      const parts = inlineTimeMatch[2].replace('.', ':').split(':');
+                      finalTime = `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}`;
+                    }
+                    setTasks((prev) => [
+                      ...prev.slice(-29),
+                      {
+                        id: Date.now(),
+                        title: finalTitle,
+                        time: finalTime,
+                        done: false,
+                      },
+                    ]);
+                    if (finalTime) {
+                      pushRealNotification(
+                        `Task Dijadwalkan: ${finalTitle}`,
+                        `Dynamic Island akan mengingatkan pukul ${finalTime}`,
+                        'calendar'
+                      );
+                    }
+                    setNewTaskInput('');
+                    setAddingTask(false);
                   }}
-                  className="mt-2 flex items-center gap-2 bg-white/8 border border-white/12 rounded-full pl-3.5 pr-1 py-1"
+                  className="mt-1 flex items-center gap-1"
                 >
                   <input
                     type="text"
-                    value={voiceQuery}
-                    onFocus={() => {
-                      setVoiceInputMode('typing');
-                      setBotForm('typing');
-                    }}
-                    onChange={(e) => setVoiceQuery(e.target.value)}
-                    placeholder="Ask Isle Assistant to play music, install packages, or add a reminder..."
-                    className="flex-1 bg-transparent text-[13px] text-white placeholder:text-white/45 focus:outline-none"
+                    autoFocus
+                    value={newTaskInput}
+                    onChange={(e) => setNewTaskInput(e.target.value)}
+                    placeholder="Nama task..."
+                    className="flex-1 min-w-0 bg-white/10 rounded px-2 py-0.5 text-[11px] text-white placeholder-white/35 focus:outline-none"
+                  />
+                  <input
+                    type="time"
+                    value={newTaskTime}
+                    onChange={(e) => setNewTaskTime(e.target.value)}
+                    title="Atur jam pengingat di Dynamic Island"
+                    style={{ colorScheme: 'dark' }}
+                    className="w-[68px] shrink-0 bg-white/10 border border-white/15 rounded px-1 py-0.5 text-[10px] text-white tabular-nums focus:outline-none focus:border-white/40"
                   />
                   <button
                     type="submit"
-                    className="w-7 h-7 rounded-full bg-white text-black hover:bg-white/85 flex items-center justify-center transition shrink-0"
+                    className="px-2 py-0.5 rounded bg-white text-black text-[10px] font-semibold shrink-0"
                   >
-                    <Send className="w-3.5 h-3.5" />
+                    Add
                   </button>
                 </form>
-              </div>
-            )}
-
-            {/* 4. EXPANDED ISLAND PRESENTATION */}
-            {presentation.mode === 'expanded' && (
-              <div
-                className="w-full h-full flex flex-col justify-between"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* Header Row inside Top Bar level */}
-                <div
-                  className="w-full flex items-center justify-between px-6 shrink-0"
-                  style={{ height: topBarHeight }}
-                >
-                  {/* Page Tabs */}
-                  <div className="flex items-center gap-0.5">
-                    {pages.map((p) => {
-                      const active = activePage === p.id;
-                      return (
-                        <button
-                          key={p.id}
-                          onClick={() => setActivePage(p.id)}
-                          className={`relative flex items-center px-2.5 py-1 rounded-full text-[12.5px] font-semibold transition-all duration-150 ${
-                            active
-                              ? 'bg-white/12 text-white'
-                              : 'text-white/75 hover:bg-white/6 hover:text-white'
-                          }`}
-                        >
-                          {p.icon}
-                          {active && <span className="ml-1.5">{p.label}</span>}
-                          {p.badge && (
-                            <span className="ml-1 w-1.5 h-1.5 rounded-full bg-[#ff453a]" />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {/* Header Right Status: Recording pill, Call pill, Mic Assistant, Clock, Settings gear */}
-                  <div className="flex items-center gap-2">
-                    {screenRecording && (
-                      <button
-                        onClick={() => setScreenRecording(false)}
-                        className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#ff453a]/25 hover:bg-[#ff453a]/40 text-[#ff6961] text-[11.5px] font-bold tnum"
-                        title="Click to stop recording"
-                      >
-                        <span className="w-2 h-2 rounded-full bg-[#ff453a]" />
-                        <span>{formatTimerMs(recordSeconds * 1000)}</span>
-                      </button>
-                    )}
-                    {callActive && activePage !== 'call' && (
-                      <button
-                        onClick={() => setActivePage('call')}
-                        className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#30d158]/20 text-[#30d158] text-[11.5px] font-semibold tnum"
-                      >
-                        <Phone className="w-3 h-3" />
-                        <span>{formatTimerMs(callSeconds * 1000)}</span>
-                      </button>
-                    )}
-                    <button
-                      onClick={() => {
-                        setPinnedOpen(false);
-                        setIsHovered(false);
-                        setVoiceOpen(true);
-                      }}
-                      className="p-1 rounded-full text-white/65 hover:text-white hover:bg-white/10 transition"
-                      title="Open Voice Assistant (Super+I)"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                    </button>
-                    <div className="text-[12.5px] tnum flex items-center gap-1.5">
-                      <span className="text-white/75">{formatHeaderDate(nowDate)}</span>
-                      <span className="font-semibold">{formatClock(nowDate)}</span>
-                    </div>
-                    <button
-                      onClick={() => setSettingsOpen(true)}
-                      className="p-1 rounded-full text-white/65 hover:text-white hover:bg-white/10 transition"
-                      title="Isle Settings"
-                    >
-                      <Settings className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Page Body (600/720 × 168) */}
-                <div className="flex-1 px-7 pt-1.5 pb-3.5 overflow-hidden flex flex-col justify-center">
-                  {/* PAGE: CALL */}
-                  {activePage === 'call' && (
-                    <div className="flex items-center justify-between gap-6 h-full">
-                      {/* Left: Live Call Window Preview (Clutter.Clone equivalent) */}
-                      <div className="relative group w-[212px] h-[126px] rounded-[14px] bg-[#1c1c1e] border border-white/10 overflow-hidden shrink-0 flex flex-col justify-between p-3">
-                        <div
-                          className="absolute inset-0 opacity-65"
-                          style={{
-                            background:
-                              'radial-gradient(circle at 30% 30%, #1d4ed8, #0f172a 75%)',
-                          }}
-                        />
-                        <div className="relative z-10 flex items-center justify-between">
-                          <span className="px-2 py-0.5 rounded-full bg-black/50 text-[10.5px] font-medium text-white/90">
-                            Aris Pratama
-                          </span>
-                          <span className="w-2 h-2 rounded-full bg-[#30d158]" />
-                        </div>
-                        {/* Simulated live participant waveform */}
-                        <div className="relative z-10 flex items-center justify-center gap-1 my-auto">
-                          <div className="w-9 h-9 rounded-full bg-white/15 border border-white/25 flex items-center justify-center text-sm font-bold">
-                            AP
-                          </div>
-                          <div className="w-9 h-9 rounded-full bg-emerald-500/25 border border-emerald-400/40 flex items-center justify-center text-sm font-bold">
-                            You
-                          </div>
-                        </div>
-                        <div className="relative z-10 text-[10.5px] text-white/65 truncate">
-                          Wayland compositor frame clone · 60 fps
-                        </div>
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
-                          <span className="p-2 rounded-full bg-black/70 text-white">
-                            <ExternalLink className="w-4 h-4" />
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Right: Call Details & FaceTime-style Round Controls */}
-                      <div className="flex-1 flex items-center justify-between">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="w-5 h-5 rounded-md bg-[#30d158]/20 text-[#30d158] flex items-center justify-center">
-                              <Video className="w-3.5 h-3.5" />
-                            </span>
-                            <span className="text-[17px] font-semibold tracking-tight">
-                              {callService}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2 mt-0.5 text-[13px]">
-                            <span className="text-white/55">Video call</span>
-                            <span className="text-white/35">·</span>
-                            <span className="text-[#30d158] font-semibold tnum">
-                              {formatTimerMs(callSeconds * 1000)}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-4">
-                          <div className="flex flex-col items-center gap-1">
-                            <button
-                              onClick={() => setCallMuted((m) => !m)}
-                              className={`w-10 h-10 rounded-full flex items-center justify-center transition ${
-                                callMuted
-                                  ? 'bg-white text-black'
-                                  : 'bg-[#2c2c2e] hover:bg-[#3a3a3c] text-white'
-                              }`}
-                            >
-                              {callMuted ? (
-                                <MicOff className="w-4 h-4" />
-                              ) : (
-                                <Mic className="w-4 h-4" />
-                              )}
-                            </button>
-                            <span className="text-[11px] text-white/60">
-                              {callMuted ? 'Muted' : 'Mute'}
-                            </span>
-                          </div>
-
-                          <div className="flex flex-col items-center gap-1">
-                            <button
-                              onClick={() => {
-                                setPinnedOpen(false);
-                                setIsHovered(false);
-                              }}
-                              className="w-10 h-10 rounded-full bg-[#2c2c2e] hover:bg-[#3a3a3c] text-white flex items-center justify-center transition"
-                            >
-                              <ExternalLink className="w-4 h-4" />
-                            </button>
-                            <span className="text-[11px] text-white/60">Open</span>
-                          </div>
-
-                          <div className="flex flex-col items-center gap-1">
-                            <button
-                              onClick={() => {
-                                setCallActive(false);
-                                setActivePage('music');
-                              }}
-                              className="w-10 h-10 rounded-full bg-[#ff453a]/25 hover:bg-[#ff453a] text-[#ff453a] hover:text-white flex items-center justify-center transition"
-                            >
-                              <Phone className="w-4 h-4 rotate-[135deg]" />
-                            </button>
-                            <span className="text-[11px] text-white/60">End</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* PAGE: MUSIC (+ SYNCED LYRICS & VOLUME/OUTPUTS) */}
-                  {activePage === 'music' && (
-                    <div className="h-full flex items-center">
-                      {audioOutputMode ? (
-                        <div className="w-full space-y-2.5">
-                          <div className="flex items-center gap-3">
-                            <button
-                              onClick={() => setVolume((v) => (v > 0 ? 0 : 74))}
-                              className="p-1.5 rounded-full bg-[#2c2c2e] hover:bg-[#3a3a3c]"
-                            >
-                              {volume === 0 ? (
-                                <VolumeX className="w-4 h-4" />
-                              ) : (
-                                <Volume2 className="w-4 h-4" />
-                              )}
-                            </button>
-                            <input
-                              type="range"
-                              min={0}
-                              max={100}
-                              value={volume}
-                              onChange={(e) => setVolume(Number(e.target.value))}
-                              className="flex-1 accent-white h-1.5 bg-white/20 rounded-lg cursor-pointer"
-                            />
-                            <span className="text-[12px] font-semibold tnum w-10 text-right text-white/85">
-                              {volume}%
-                            </span>
-                            <button
-                              onClick={() => setAudioOutputMode(false)}
-                              className="px-2.5 py-1 rounded-full bg-white/15 text-[11.5px] font-semibold"
-                            >
-                              Back
-                            </button>
-                          </div>
-
-                          <div className="grid grid-cols-3 gap-2">
-                            {[
-                              {
-                                id: 'airbuds' as const,
-                                name: 'AirBuds Pro',
-                                detail: 'Bluetooth · 70%',
-                                icon: <Headphones className="w-4 h-4" />,
-                              },
-                              {
-                                id: 'speakers' as const,
-                                name: 'Speakers',
-                                detail: 'Built-in Audio',
-                                icon: <Speaker className="w-4 h-4" />,
-                              },
-                              {
-                                id: 'hdmi' as const,
-                                name: 'LG UltraFine',
-                                detail: 'DisplayPort',
-                                icon: <Monitor className="w-4 h-4" />,
-                              },
-                            ].map((out) => (
-                              <button
-                                key={out.id}
-                                onClick={() => setSelectedOutput(out.id)}
-                                className={`flex items-center justify-between px-3 py-2 rounded-xl text-left transition ${
-                                  selectedOutput === out.id
-                                    ? 'bg-[#1c1c1e] border border-white/15'
-                                    : 'hover:bg-[#1c1c1e]/60'
-                                }`}
-                              >
-                                <div className="flex items-center gap-2.5 min-w-0">
-                                  {out.icon}
-                                  <div className="min-w-0">
-                                    <div className="text-[12.5px] font-semibold truncate">
-                                      {out.name}
-                                    </div>
-                                    <div className="text-[11px] text-white/50 truncate">
-                                      {out.detail}
-                                    </div>
-                                  </div>
-                                </div>
-                                {selectedOutput === out.id && (
-                                  <Check className="w-3.5 h-3.5 text-[#30d158] shrink-0" />
-                                )}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : lyricsMode ? (
-                        /* Synced Lyrics Layout (720px wide) */
-                        <div className="w-full h-full flex items-center gap-6">
-                          {/* Left Column (232px) */}
-                          <div className="w-[232px] shrink-0 flex flex-col justify-between h-full py-0.5">
-                            <div className="flex items-center gap-3">
-                              <div
-                                className="w-14 h-14 rounded-xl shrink-0 shadow-md"
-                                style={{
-                                  background: `linear-gradient(135deg, ${currentTrack.coverGradient[0]}, ${currentTrack.coverGradient[1]}, ${currentTrack.coverGradient[2]})`,
-                                }}
-                              />
-                              <div className="min-w-0">
-                                <div className="text-[14.5px] font-bold tracking-tight truncate">
-                                  {currentTrack.title}
-                                </div>
-                                <div className="text-[12px] text-white/60 truncate">
-                                  {currentTrack.artist}
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Scrubber */}
-                            <div className="flex items-center gap-2 text-[11px] tnum text-white/60">
-                              <span>{formatTimerMs(trackPosMs)}</span>
-                              <div
-                                onClick={(e) => {
-                                  const rect = e.currentTarget.getBoundingClientRect();
-                                  const ratio = Math.max(
-                                    0,
-                                    Math.min(1, (e.clientX - rect.left) / rect.width)
-                                  );
-                                  setTrackPosMs(ratio * currentTrack.durationMs);
-                                }}
-                                className="flex-1 h-1.5 rounded-full bg-white/20 cursor-pointer overflow-hidden"
-                              >
-                                <div
-                                  className="h-full bg-white rounded-full"
-                                  style={{
-                                    width: `${
-                                      (trackPosMs / currentTrack.durationMs) * 100
-                                    }%`,
-                                  }}
-                                />
-                              </div>
-                              <span>
-                                -{formatTimerMs(currentTrack.durationMs - trackPosMs)}
-                              </span>
-                            </div>
-
-                            {/* Controls */}
-                            <div className="flex items-center justify-between">
-                              <button
-                                onClick={() => setLyricsMode(false)}
-                                className="p-1.5 rounded-full bg-white/20 text-white"
-                                title="Hide Synced Lyrics"
-                              >
-                                <MessageSquareQuote className="w-4 h-4" />
-                              </button>
-                              <div className="flex items-center gap-3">
-                                <button
-                                  onClick={() => {
-                                    setTrackIndex(
-                                      (i) =>
-                                        (i - 1 + SAMPLE_TRACKS.length) %
-                                        SAMPLE_TRACKS.length
-                                    );
-                                    setTrackPosMs(0);
-                                  }}
-                                  className="p-1 rounded-full hover:bg-white/10"
-                                >
-                                  <SkipBack className="w-4 h-4 fill-white" />
-                                </button>
-                                <button
-                                  onClick={() => setIsPlaying((p) => !p)}
-                                  className="p-1.5 rounded-full bg-white/15 hover:bg-white/25"
-                                >
-                                  {isPlaying ? (
-                                    <Pause className="w-4 h-4 fill-white" />
-                                  ) : (
-                                    <Play className="w-4 h-4 fill-white" />
-                                  )}
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    setTrackIndex((i) => (i + 1) % SAMPLE_TRACKS.length);
-                                    setTrackPosMs(0);
-                                  }}
-                                  className="p-1 rounded-full hover:bg-white/10"
-                                >
-                                  <SkipForward className="w-4 h-4 fill-white" />
-                                </button>
-                              </div>
-                              <button
-                                onClick={() => setAudioOutputMode(true)}
-                                className="p-1.5 rounded-full hover:bg-white/10 text-white/75"
-                                title="Volume & Outputs"
-                              >
-                                <Speaker className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Right Column: Synced LRCLIB Lines */}
-                          <div className="flex-1 h-full overflow-y-auto no-scrollbar flex flex-col justify-center space-y-1.5 pr-2">
-                            {parsedLyrics.map((line, idx) => {
-                              const dist = idx - activeLyricIndex;
-                              if (Math.abs(dist) > 2) return null;
-                              const isCurrent = dist === 0;
-                              return (
-                                <button
-                                  key={idx}
-                                  onClick={() => setTrackPosMs(line.timeMs)}
-                                  className={`text-left transition-all duration-200 ${
-                                    isCurrent
-                                      ? 'text-[17.5px] font-bold text-white scale-100'
-                                      : dist < 0
-                                      ? 'text-[13.5px] font-semibold text-white/30'
-                                      : 'text-[14.5px] font-semibold text-white/55 hover:text-white/80'
-                                  }`}
-                                >
-                                  {line.text === '' ? (
-                                    <span className="inline-flex items-center gap-1.5 py-1">
-                                      <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                                      <span className="w-2 h-2 rounded-full bg-white/70 animate-pulse" />
-                                      <span className="w-2 h-2 rounded-full bg-white/40 animate-pulse" />
-                                    </span>
-                                  ) : (
-                                    line.text
-                                  )}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ) : (
-                        /* Standard Now-Playing Card (600px wide) */
-                        <div className="w-full flex items-center gap-5">
-                          {/* 104px Album Cover with App Badge */}
-                          <div className="relative w-[104px] h-[104px] shrink-0">
-                            <div
-                              className="w-full h-full rounded-2xl shadow-lg"
-                              style={{
-                                background: `linear-gradient(135deg, ${currentTrack.coverGradient[0]}, ${currentTrack.coverGradient[1]}, ${currentTrack.coverGradient[2]})`,
-                              }}
-                            />
-                            <span className="absolute -bottom-1 -right-1 px-1.5 py-0.5 rounded-full bg-black border border-white/15 text-[10px] font-semibold text-[#30d158]">
-                              {currentTrack.app}
-                            </span>
-                          </div>
-
-                          <div className="flex-1 min-w-0 flex flex-col justify-between h-[104px]">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <div className="text-[17px] font-semibold tracking-tight truncate">
-                                  {currentTrack.title}
-                                </div>
-                                <div className="text-[13px] text-white/55 truncate">
-                                  {currentTrack.artist} — {currentTrack.album}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1 shrink-0">
-                                <button
-                                  onClick={() => setLyricsMode(true)}
-                                  className="p-1.5 rounded-full hover:bg-white/12 text-white/80 hover:text-white transition"
-                                  title="Synced Lyrics (LRCLIB)"
-                                >
-                                  <MessageSquareQuote className="w-4 h-4" />
-                                </button>
-                                <button
-                                  onClick={() => setAudioOutputMode(true)}
-                                  className="p-1.5 rounded-full hover:bg-white/12 text-white/80 hover:text-white transition"
-                                  title="Volume & Output Device"
-                                >
-                                  <Headphones className="w-4 h-4" />
-                                </button>
-                              </div>
-                            </div>
-
-                            {/* Scrubber */}
-                            <div className="flex items-center gap-2.5 text-[12px] tnum text-white/60">
-                              <span className="w-9">{formatTimerMs(trackPosMs)}</span>
-                              <div
-                                onClick={(e) => {
-                                  const rect = e.currentTarget.getBoundingClientRect();
-                                  const ratio = Math.max(
-                                    0,
-                                    Math.min(1, (e.clientX - rect.left) / rect.width)
-                                  );
-                                  setTrackPosMs(ratio * currentTrack.durationMs);
-                                }}
-                                className="flex-1 h-1.5 rounded-full bg-white/20 cursor-pointer overflow-hidden"
-                              >
-                                <div
-                                  className="h-full bg-white rounded-full transition-all duration-150"
-                                  style={{
-                                    width: `${
-                                      (trackPosMs / currentTrack.durationMs) * 100
-                                    }%`,
-                                  }}
-                                />
-                              </div>
-                              <span className="w-10 text-right">
-                                -{formatTimerMs(currentTrack.durationMs - trackPosMs)}
-                              </span>
-                            </div>
-
-                            {/* Transport */}
-                            <div className="flex items-center justify-center gap-6">
-                              <button
-                                onClick={() => {
-                                  setTrackIndex(
-                                    (i) =>
-                                      (i - 1 + SAMPLE_TRACKS.length) %
-                                      SAMPLE_TRACKS.length
-                                  );
-                                  setTrackPosMs(0);
-                                }}
-                                className="p-1.5 rounded-full hover:bg-white/12 transition"
-                              >
-                                <SkipBack className="w-4 h-4 fill-white" />
-                              </button>
-                              <button
-                                onClick={() => setIsPlaying((p) => !p)}
-                                className="p-2 rounded-full bg-white/15 hover:bg-white/25 transition"
-                              >
-                                {isPlaying ? (
-                                  <Pause className="w-4 h-4 fill-white" />
-                                ) : (
-                                  <Play className="w-4 h-4 fill-white" />
-                                )}
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setTrackIndex((i) => (i + 1) % SAMPLE_TRACKS.length);
-                                  setTrackPosMs(0);
-                                }}
-                                className="p-1.5 rounded-full hover:bg-white/12 transition"
-                              >
-                                <SkipForward className="w-4 h-4 fill-white" />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* PAGE: NOTIFICATIONS */}
-                  {activePage === 'notifications' && (
-                    <div className="h-full flex flex-col justify-between">
-                      <div className="flex items-center justify-between pb-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[13px] font-semibold text-white/60">
-                            Notifications
-                          </span>
-                          {dnd && (
-                            <span className="text-[11.5px] text-white/45">
-                              · Do Not Disturb is on
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => setDnd((d) => !d)}
-                            className={`p-1.5 rounded-full transition ${
-                              dnd
-                                ? 'bg-[#5e5ce6] text-white'
-                                : 'bg-[#2c2c2e] text-white/65 hover:text-white'
-                            }`}
-                            title="Toggle Do Not Disturb"
-                          >
-                            {dnd ? (
-                              <Moon className="w-3.5 h-3.5 fill-white" />
-                            ) : (
-                              <Bell className="w-3.5 h-3.5" />
-                            )}
-                          </button>
-                          <button
-                            disabled={notifications.length === 0}
-                            onClick={() => setNotifications([])}
-                            className="px-3 py-1 rounded-full bg-[#2c2c2e] hover:bg-[#3a3a3c] disabled:opacity-40 text-[12px] font-semibold transition"
-                          >
-                            Clear
-                          </button>
-                        </div>
-                      </div>
-
-                      {notifications.length === 0 ? (
-                        <div className="flex-1 flex flex-col items-center justify-center text-center">
-                          <BellOff className="w-5 h-5 text-white/35 mb-1" />
-                          <div className="text-[14px] font-semibold">
-                            No notifications
-                          </div>
-                          <div className="text-[12px] text-white/50">
-                            You're all caught up
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex-1 overflow-y-auto no-scrollbar space-y-1">
-                          {notifications.map((n) => (
-                            <div
-                              key={n.id}
-                              className="group flex items-center justify-between gap-2.5 px-2.5 py-1.5 rounded-[10px] hover:bg-white/6 transition"
-                            >
-                              <div className="flex items-center gap-2.5 min-w-0">
-                                <span className="w-5 h-5 rounded-[6px] bg-[#2c2c2e] flex items-center justify-center text-[10px] font-bold shrink-0">
-                                  {n.app[0]}
-                                </span>
-                                <span className="text-[13px] font-semibold shrink-0">
-                                  {n.title}
-                                </span>
-                                <span className="text-[13px] text-white/55 truncate">
-                                  {n.body}
-                                </span>
-                              </div>
-                              <div className="shrink-0 flex items-center gap-1.5">
-                                <span className="text-[12px] text-white/45 group-hover:hidden">
-                                  {n.time}
-                                </span>
-                                <div className="hidden group-hover:flex items-center gap-1.5">
-                                  {n.actions.map((act) => (
-                                    <button
-                                      key={act}
-                                      onClick={() =>
-                                        setNotifications((prev) =>
-                                          prev.filter((item) => item.id !== n.id)
-                                        )
-                                      }
-                                      className="px-2.5 py-0.5 rounded-full bg-[#2c2c2e] hover:bg-[#3a3a3c] text-[11px] font-semibold"
-                                    >
-                                      {act}
-                                    </button>
-                                  ))}
-                                  <button
-                                    onClick={() =>
-                                      setNotifications((prev) =>
-                                        prev.filter((item) => item.id !== n.id)
-                                      )
-                                    }
-                                    className="p-1 rounded-full bg-[#3a3a3c] hover:bg-[#4a4a4e]"
-                                  >
-                                    <X className="w-3 h-3" />
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* PAGE: FOCUS (POMODORO) */}
-                  {activePage === 'focus' && (
-                    <div className="h-full flex items-center justify-between gap-6">
-                      {/* Left: 104px Clockwise Ring */}
-                      <div className="relative w-[104px] h-[104px] flex items-center justify-center shrink-0">
-                        <svg className="w-full h-full -rotate-90" viewBox="0 0 104 104">
-                          <circle
-                            cx="52"
-                            cy="52"
-                            r="44"
-                            fill="none"
-                            stroke="rgba(255,255,255,0.14)"
-                            strokeWidth="6"
-                          />
-                          <circle
-                            cx="52"
-                            cy="52"
-                            r="44"
-                            fill="none"
-                            stroke={
-                              pomoPhase === Phase.ShortBreak ||
-                              pomoPhase === Phase.LongBreak
-                                ? '#30d158'
-                                : '#ffffff'
-                            }
-                            strokeWidth="6"
-                            strokeDasharray={276.46}
-                            strokeDashoffset={276.46 * (1 - focusProgress)}
-                            strokeLinecap="round"
-                            className="transition-all duration-300"
-                          />
-                        </svg>
-                        <div className="absolute inset-0 flex flex-col items-center justify-center">
-                          <span className="text-[22px] font-semibold tnum tracking-tight">
-                            {formatTimerMs(pomoRemainingMs)}
-                          </span>
-                          <span className="text-[11.5px] font-medium text-white/55">
-                            {phaseLabel(pomoPhase)}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Middle: Work & Break Steppers */}
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center gap-2 bg-[#1c1c1e] rounded-full pl-3.5 pr-1.5 py-1">
-                          <span className="text-[12px] font-medium text-white/55 w-11">
-                            Work
-                          </span>
-                          <span className="text-[15px] font-semibold tnum w-7 text-right pr-1">
-                            {pomoConfig.focusMinutes}
-                          </span>
-                          <button
-                            onClick={() => {
-                              const next = Math.max(1, pomoConfig.focusMinutes - 5);
-                              setPomoConfig({ ...pomoConfig, focusMinutes: next });
-                              if (pomoPhase === Phase.Idle) {
-                                setPomoRemainingMs(next * 60_000);
-                                setPomoDurationMs(next * 60_000);
-                              }
-                            }}
-                            className="p-1.5 rounded-full hover:bg-white/10 text-white/80"
-                          >
-                            <Minus className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => {
-                              const next = Math.min(180, pomoConfig.focusMinutes + 5);
-                              setPomoConfig({ ...pomoConfig, focusMinutes: next });
-                              if (pomoPhase === Phase.Idle) {
-                                setPomoRemainingMs(next * 60_000);
-                                setPomoDurationMs(next * 60_000);
-                              }
-                            }}
-                            className="p-1.5 rounded-full hover:bg-white/10 text-white/80"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-
-                        <div className="flex items-center gap-2 bg-[#1c1c1e] rounded-full pl-3.5 pr-1.5 py-1">
-                          <span className="text-[12px] font-medium text-white/55 w-11">
-                            Break
-                          </span>
-                          <span className="text-[15px] font-semibold tnum w-7 text-right pr-1">
-                            {pomoConfig.shortBreakMinutes}
-                          </span>
-                          <button
-                            onClick={() =>
-                              setPomoConfig({
-                                ...pomoConfig,
-                                shortBreakMinutes: Math.max(
-                                  1,
-                                  pomoConfig.shortBreakMinutes - 1
-                                ),
-                              })
-                            }
-                            className="p-1.5 rounded-full hover:bg-white/10 text-white/80"
-                          >
-                            <Minus className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() =>
-                              setPomoConfig({
-                                ...pomoConfig,
-                                shortBreakMinutes: Math.min(
-                                  60,
-                                  pomoConfig.shortBreakMinutes + 1
-                                ),
-                              })
-                            }
-                            className="p-1.5 rounded-full hover:bg-white/10 text-white/80"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Right: Start / Pause / Resume pill + Reset */}
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          onClick={() => {
-                            if (pomoPhase === Phase.Idle) {
-                              setPomoPhase(Phase.Focus);
-                              const dur = pomoConfig.focusMinutes * 60_000;
-                              setPomoDurationMs(dur);
-                              setPomoRemainingMs(dur);
-                              setPomoRunning(true);
-                              setDnd(true);
-                            } else {
-                              setPomoRunning((r) => !r);
-                            }
-                          }}
-                          className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#2c2c2e] hover:bg-[#3a3a3c] text-[14px] font-semibold transition"
-                        >
-                          {pomoRunning ? (
-                            <>
-                              <Pause className="w-4 h-4 fill-white" />
-                              <span>Pause</span>
-                            </>
-                          ) : (
-                            <>
-                              <Play className="w-4 h-4 fill-white" />
-                              <span>
-                                {pomoPhase === Phase.Idle ? 'Start' : 'Resume'}
-                              </span>
-                            </>
-                          )}
-                        </button>
-                        {pomoPhase !== Phase.Idle && (
-                          <button
-                            onClick={() => {
-                              setPomoRunning(false);
-                              setPomoPhase(Phase.Idle);
-                              const dur = pomoConfig.focusMinutes * 60_000;
-                              setPomoDurationMs(dur);
-                              setPomoRemainingMs(dur);
-                              setDnd(false);
-                            }}
-                            className="p-2.5 rounded-full bg-[#2c2c2e] hover:bg-[#3a3a3c] transition"
-                            title="Reset Pomodoro Timer"
-                          >
-                            <RotateCcw className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* PAGE: REMINDERS */}
-                  {activePage === 'reminders' && (
-                    <div className="h-full flex flex-col justify-between">
-                      <div className="flex items-center justify-between h-6">
-                        <span className="text-[17px] font-semibold text-[#ff9f0a] tracking-tight">
-                          Reminders
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[17px] font-semibold text-[#ff9f0a] tnum">
-                            {reminders.filter((r) => !r.doneAt).length}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex-1 overflow-y-auto no-scrollbar space-y-1 pt-1">
-                        {reminders.map((r) => {
-                          const isDone = Boolean(r.doneAt);
-                          return (
-                            <div
-                              key={r.id}
-                              className="group flex items-center gap-2.5 min-h-[24px] border-b border-white/10 pb-1"
-                            >
-                              <button
-                                onClick={() => toggleReminder(r.id)}
-                                className={`w-4 h-4 rounded-full border-[1.5px] flex items-center justify-center shrink-0 transition ${
-                                  isDone
-                                    ? 'border-[#ff9f0a]'
-                                    : 'border-white/35 hover:border-white/65'
-                                }`}
-                              >
-                                {isDone && (
-                                  <span className="w-2.5 h-2.5 rounded-full bg-[#ff9f0a]" />
-                                )}
-                              </button>
-
-                              {editingReminderId === r.id ? (
-                                <input
-                                  type="text"
-                                  autoFocus
-                                  value={editingReminderText}
-                                  onChange={(e) =>
-                                    setEditingReminderText(e.target.value)
-                                  }
-                                  onBlur={() => {
-                                    if (editingReminderText.trim()) {
-                                      setReminders((prev) =>
-                                        prev.map((item) =>
-                                          item.id === r.id
-                                            ? {
-                                                ...item,
-                                                title: editingReminderText.trim(),
-                                              }
-                                            : item
-                                        )
-                                      );
-                                    }
-                                    setEditingReminderId(null);
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') e.currentTarget.blur();
-                                    if (e.key === 'Escape') setEditingReminderId(null);
-                                  }}
-                                  className="flex-1 bg-transparent text-[13.5px] text-white focus:outline-none"
-                                />
-                              ) : (
-                                <span
-                                  onClick={() => {
-                                    setEditingReminderId(r.id);
-                                    setEditingReminderText(r.title);
-                                  }}
-                                  className={`flex-1 text-[13.5px] cursor-text truncate transition ${
-                                    isDone
-                                      ? 'line-through text-white/40'
-                                      : 'text-white'
-                                  }`}
-                                >
-                                  {r.title}
-                                </span>
-                              )}
-
-                              <button
-                                onClick={() =>
-                                  setReminders((prev) =>
-                                    prev.filter((item) => item.id !== r.id)
-                                  )
-                                }
-                                className="opacity-0 group-hover:opacity-100 p-0.5 rounded-full text-white/50 hover:text-white transition"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          );
-                        })}
-
-                        {/* Faint "New Reminder" row */}
-                        <form
-                          onSubmit={(e) => {
-                            e.preventDefault();
-                            if (!newReminderText.trim()) return;
-                            setReminders((prev) => [
-                              ...prev,
-                              { id: Date.now(), title: newReminderText.trim() },
-                            ]);
-                            setNewReminderText('');
-                          }}
-                          className="flex items-center gap-2.5 min-h-[24px] pt-0.5"
-                        >
-                          <span className="w-4 h-4 rounded-full border-[1.5px] border-white/15 shrink-0" />
-                          <input
-                            type="text"
-                            value={newReminderText}
-                            onChange={(e) => setNewReminderText(e.target.value)}
-                            placeholder="New Reminder"
-                            className="flex-1 bg-transparent text-[13.5px] text-white placeholder:text-white/40 focus:outline-none"
-                          />
-                        </form>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* PAGE: SHELF (CLIPBOARD + FILES TRAY) */}
-                  {activePage === 'shelf' && (
-                    <div className="h-full flex flex-col justify-between">
-                      {/* Top Segmented Control Bar */}
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center bg-[#1c1c1e] p-0.5 rounded-full">
-                          <button
-                            onClick={() => setShelfTab('clipboard')}
-                            className={`px-3 py-0.5 rounded-full text-[12px] font-semibold transition ${
-                              shelfTab === 'clipboard'
-                                ? 'bg-[#3a3a3c] text-white shadow'
-                                : 'text-white/60 hover:text-white'
-                            }`}
-                          >
-                            Clipboard
-                          </button>
-                          <button
-                            onClick={() => setShelfTab('files')}
-                            className={`px-3 py-0.5 rounded-full text-[12px] font-semibold transition ${
-                              shelfTab === 'files'
-                                ? 'bg-[#3a3a3c] text-white shadow'
-                                : 'text-white/60 hover:text-white'
-                            }`}
-                          >
-                            Files ({shelfFiles.length}/6)
-                          </button>
-                        </div>
-
-                        {shelfTab === 'clipboard' ? (
-                          <div className="flex items-center gap-1.5">
-                            <div className="flex items-center bg-[#1c1c1e] p-0.5 rounded-full">
-                              {(
-                                [
-                                  { id: 'all', icon: <Clipboard className="w-3 h-3" /> },
-                                  { id: 'text', icon: <FileText className="w-3 h-3" /> },
-                                  { id: 'link', icon: <Link2 className="w-3 h-3" /> },
-                                  {
-                                    id: 'image',
-                                    icon: <ImageIcon className="w-3 h-3" />,
-                                  },
-                                ] as const
-                              ).map((f) => (
-                                <button
-                                  key={f.id}
-                                  onClick={() => setClipFilter(f.id)}
-                                  className={`p-1 rounded-full transition ${
-                                    clipFilter === f.id
-                                      ? 'bg-[#3a3a3c] text-white'
-                                      : 'text-white/50 hover:text-white'
-                                  }`}
-                                  title={`Filter: ${f.id}`}
-                                >
-                                  {f.icon}
-                                </button>
-                              ))}
-                            </div>
-
-                            {clipSearchOpen ? (
-                              <input
-                                type="text"
-                                autoFocus
-                                value={clipSearch}
-                                onChange={(e) => setClipSearch(e.target.value)}
-                                onBlur={() => {
-                                  if (!clipSearch) setClipSearchOpen(false);
-                                }}
-                                placeholder="Search clips..."
-                                className="w-32 bg-[#1c1c1e] text-[12px] px-2.5 py-1 rounded-full focus:outline-none"
-                              />
-                            ) : (
-                              <button
-                                onClick={() => setClipSearchOpen(true)}
-                                className="p-1.5 rounded-full bg-[#2c2c2e] hover:bg-[#3a3a3c]"
-                                title="Search clipboard (Super+V)"
-                              >
-                                <Search className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <span className="text-[12px] text-white/55">
-                              {shelfFiles.length} of 6 · click to copy, or drop files
-                            </span>
-                            <button
-                              onClick={handleDropSampleFile}
-                              disabled={shelfFiles.length >= 6}
-                              className="px-2.5 py-0.5 rounded-full bg-[#2c2c2e] hover:bg-[#3a3a3c] disabled:opacity-40 text-[11.5px] font-semibold flex items-center gap-1"
-                            >
-                              <Upload className="w-3 h-3" />
-                              <span>Drop file</span>
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Shelf Content */}
-                      {shelfTab === 'clipboard' ? (
-                        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-1">
-                          {clips
-                            .filter((c) =>
-                              clipFilter === 'all'
-                                ? true
-                                : clipFilter === 'text'
-                                ? c.kind === 'text' || c.kind === 'code'
-                                : c.kind === clipFilter
-                            )
-                            .filter((c) =>
-                              clipSearch
-                                ? c.content
-                                    .toLowerCase()
-                                    .includes(clipSearch.toLowerCase())
-                                : true
-                            )
-                            .sort((a, b) => Number(b.pinned) - Number(a.pinned))
-                            .map((clip) => (
-                              <div
-                                key={clip.id}
-                                onClick={() => {
-                                  navigator.clipboard?.writeText(clip.content).catch(() => {});
-                                  setCopiedClipId(clip.id);
-                                  setTimeout(() => setCopiedClipId(null), 900);
-                                }}
-                                style={
-                                  clip.kind === 'image' && clip.gradient
-                                    ? { background: clip.gradient }
-                                    : undefined
-                                }
-                                className="group relative w-[132px] h-[94px] rounded-[12px] bg-[#1c1c1e] hover:bg-[#242426] p-2 flex flex-col justify-between shrink-0 cursor-pointer overflow-hidden border border-white/5"
-                              >
-                                <div className="flex items-center justify-between text-[11px] text-white/55">
-                                  <span className="font-semibold text-white/80 truncate">
-                                    {clip.app}
-                                  </span>
-                                  <span>{clip.age}</span>
-                                </div>
-
-                                <div className="min-w-0">
-                                  {clip.kind === 'code' ? (
-                                    <div className="font-mono text-[10.5px] text-white/90 line-clamp-3 leading-tight">
-                                      {clip.content}
-                                    </div>
-                                  ) : clip.kind === 'link' ? (
-                                    <div>
-                                      <div className="text-[12px] font-bold truncate">
-                                        {clip.subtitle}
-                                      </div>
-                                      <div className="text-[11px] text-white/55 truncate">
-                                        {clip.content}
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <div className="text-[11.5px] text-white/90 line-clamp-3 leading-tight">
-                                      {clip.content}
-                                    </div>
-                                  )}
-                                </div>
-
-                                {/* Hover Pin & Remove actions */}
-                                <div
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="absolute top-1.5 right-1.5 hidden group-hover:flex items-center gap-1"
-                                >
-                                  <button
-                                    onClick={() =>
-                                      setClips((prev) =>
-                                        prev.map((item) =>
-                                          item.id === clip.id
-                                            ? { ...item, pinned: !item.pinned }
-                                            : item
-                                        )
-                                      )
-                                    }
-                                    className={`p-1 rounded-full ${
-                                      clip.pinned
-                                        ? 'bg-[#ff9f0a] text-black'
-                                        : 'bg-[#3a3a3c] text-white'
-                                    }`}
-                                    title="Pin item"
-                                  >
-                                    <Pin className="w-2.5 h-2.5" />
-                                  </button>
-                                  <button
-                                    onClick={() =>
-                                      setClips((prev) =>
-                                        prev.filter((item) => item.id !== clip.id)
-                                      )
-                                    }
-                                    className="p-1 rounded-full bg-[#3a3a3c] text-white"
-                                  >
-                                    <X className="w-2.5 h-2.5" />
-                                  </button>
-                                </div>
-
-                                {/* Copied feedback overlay */}
-                                {copiedClipId === clip.id && (
-                                  <div className="absolute inset-0 bg-[#1c1c1e]/95 flex flex-col items-center justify-center">
-                                    <Check className="w-4 h-4 text-[#30d158]" />
-                                    <span className="text-[11.5px] font-bold mt-1">
-                                      Copied
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                        </div>
-                      ) : (
-                        /* Files Tray (up to 6 tiles) */
-                        <div className="grid grid-cols-6 gap-2 pt-1">
-                          {shelfFiles.map((file) => (
-                            <div
-                              key={file.id}
-                              onClick={() => {
-                                setCopiedFileId(file.id);
-                                setTimeout(() => setCopiedFileId(null), 900);
-                              }}
-                              className="relative flex flex-col items-center p-1.5 rounded-[14px] hover:bg-[#1c1c1e] cursor-pointer transition"
-                            >
-                              <div
-                                className="relative w-[52px] h-[52px] rounded-[12px] flex items-center justify-center shadow"
-                                style={{ background: file.previewGradient }}
-                              >
-                                <FileText className="w-5 h-5 text-white/90" />
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setShelfFiles((prev) =>
-                                      prev.filter((f) => f.id !== file.id)
-                                    );
-                                  }}
-                                  className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[#3a3a3c] hover:bg-[#5a5a5e] border border-black flex items-center justify-center"
-                                >
-                                  <X className="w-2.5 h-2.5" />
-                                </button>
-                                {copiedFileId === file.id && (
-                                  <div className="absolute inset-0 rounded-[12px] bg-black/75 flex items-center justify-center text-[10px] font-bold text-[#30d158]">
-                                    Copied
-                                  </div>
-                                )}
-                              </div>
-                              <span className="text-[11px] text-center leading-tight mt-1 line-clamp-2">
-                                {file.name}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* PAGE: CALENDAR & WORLD CLOCKS */}
-                  {activePage === 'calendar' && (
-                    <div className="h-full flex items-center gap-5">
-                      {/* Left: Month Calendar Widget (196px) */}
-                      <div className="w-[196px] shrink-0 flex flex-col justify-between h-full">
-                        <div className="flex items-center justify-between">
-                          <button
-                            onClick={() => setSelectedDateIso(todayIso)}
-                            className="flex items-center gap-1.5 px-1 py-0.5 rounded hover:bg-white/8"
-                          >
-                            <span className="text-[11.5px] font-bold text-[#ff453a] uppercase">
-                              {nowDate.toLocaleDateString('en-US', { month: 'long' })}
-                            </span>
-                            <span className="text-[11.5px] font-semibold text-white/50 tnum">
-                              {nowDate.getFullYear()}
-                            </span>
-                          </button>
-                          <button
-                            onClick={() =>
-                              setShowWorldClocksDetail((w) => !w)
-                            }
-                            className={`p-1 rounded-full transition ${
-                              showWorldClocksDetail
-                                ? 'bg-white/20 text-white'
-                                : 'text-white/60 hover:text-white'
-                            }`}
-                            title="Toggle World Clocks"
-                          >
-                            <Globe className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-
-                        <div className="grid grid-cols-7 text-center text-[9.5px] font-semibold text-white/50">
-                          {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
-                            <span key={i}>{d}</span>
-                          ))}
-                        </div>
-
-                        <div className="grid grid-cols-7 gap-y-0.5 text-center">
-                          {calendarDays.slice(0, 35).map((cell) => {
-                            if (!cell.day) {
-                              return <span key={cell.iso} className="h-[18px]" />;
-                            }
-                            const isToday = cell.iso === todayIso;
-                            const isSelected = cell.iso === selectedDateIso;
-                            return (
-                              <button
-                                key={cell.iso}
-                                onClick={() => setSelectedDateIso(cell.iso)}
-                                className={`mx-auto w-[19px] h-[19px] rounded-full text-[10.5px] font-semibold tnum flex flex-col items-center justify-center relative transition ${
-                                  isToday
-                                    ? 'bg-[#ff453a] text-white font-bold'
-                                    : isSelected
-                                    ? 'bg-white/22 text-white'
-                                    : 'text-white/85 hover:bg-white/12'
-                                }`}
-                              >
-                                <span>{cell.day}</span>
-                                {cell.hasEvent && (
-                                  <span className="w-[3px] h-[3px] rounded-full bg-white/80 absolute -bottom-0.5" />
-                                )}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Right: Day Agenda or World Clocks */}
-                      <div className="flex-1 h-full flex flex-col justify-between min-w-0">
-                        {showWorldClocksDetail ? (
-                          <div className="space-y-1.5 my-auto">
-                            {[
-                              { city: 'New York', tz: 'America/New_York', meta: 'EDT' },
-                              { city: 'London', tz: 'Europe/London', meta: 'BST' },
-                              { city: 'Jakarta', tz: 'Asia/Jakarta', meta: 'WIB' },
-                              { city: 'Tokyo', tz: 'Asia/Tokyo', meta: 'JST' },
-                            ].map((wc) => (
-                              <div
-                                key={wc.city}
-                                className="flex items-center justify-between px-3 py-1 rounded-[7px] bg-white/7"
-                              >
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[12.5px] font-semibold">
-                                    {wc.city}
-                                  </span>
-                                  <span className="text-[11px] text-white/50">
-                                    {wc.meta}
-                                  </span>
-                                </div>
-                                <span className="text-[12.5px] font-semibold tnum">
-                                  {nowDate.toLocaleTimeString('en-GB', {
-                                    timeZone: wc.tz,
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                  })}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <>
-                            {/* Natural Language Event Input ("Dinner 8:00 pm") */}
-                            <form
-                              onSubmit={(e) => {
-                                e.preventDefault();
-                                const parsed = parseEventLine(calInput);
-                                if (!parsed) return;
-                                setEvents((prev) => [
-                                  ...prev,
-                                  {
-                                    id: Date.now(),
-                                    title: parsed.title,
-                                    date: selectedDateIso,
-                                    start: parsed.start,
-                                    end: parsed.end,
-                                    source: 'isle',
-                                  },
-                                ]);
-                                setCalInput('');
-                              }}
-                            >
-                              <input
-                                type="text"
-                                value={calInput}
-                                onChange={(e) => setCalInput(e.target.value)}
-                                placeholder="Add event: e.g. Dinner 8:00 pm or Standup 9:00-9:15"
-                                className="w-full bg-[#1c1c1e] focus:bg-[#2c2c2e] text-[12px] text-white placeholder:text-white/45 px-3 py-1 rounded-full focus:outline-none"
-                              />
-                            </form>
-
-                            {/* Day's Events */}
-                            <div className="flex-1 overflow-y-auto no-scrollbar space-y-1 my-1">
-                              {selectedDayEvents.length === 0 ? (
-                                <div className="text-[12.5px] text-white/50 pt-2">
-                                  No events on {selectedDateIso}
-                                </div>
-                              ) : (
-                                selectedDayEvents.map((ev) => {
-                                  const isDesktop = ev.source === 'desktop';
-                                  return (
-                                    <div
-                                      key={ev.id}
-                                      className={`group flex items-center justify-between px-2 py-1 rounded-[7px] ${
-                                        isDesktop
-                                          ? 'bg-[#0a84ff]/18'
-                                          : 'bg-[#ff9f0a]/18'
-                                      }`}
-                                    >
-                                      <div className="flex items-center gap-2 min-w-0">
-                                        <span
-                                          className={`w-[3px] h-4 rounded-full shrink-0 ${
-                                            isDesktop
-                                              ? 'bg-[#0a84ff]'
-                                              : 'bg-[#ff9f0a]'
-                                          }`}
-                                        />
-                                        <span className="text-[12.5px] font-semibold truncate">
-                                          {ev.title}
-                                        </span>
-                                      </div>
-                                      <div className="flex items-center gap-1.5 shrink-0">
-                                        {ev.meetingUrl && (
-                                          <button
-                                            onClick={() => {
-                                              setCallService('Google Meet');
-                                              setCallActive(true);
-                                              setCallSeconds(1);
-                                              setActivePage('call');
-                                            }}
-                                            className="px-2 py-0.5 rounded-full bg-[#0a84ff] text-[10.5px] font-semibold"
-                                          >
-                                            Join
-                                          </button>
-                                        )}
-                                        <span className="text-[11px] text-white/65 tnum">
-                                          {ev.start
-                                            ? ev.end
-                                              ? `${ev.start}–${ev.end}`
-                                              : ev.start
-                                            : 'All day'}
-                                        </span>
-                                        {ev.source === 'isle' && (
-                                          <button
-                                            onClick={() =>
-                                              setEvents((prev) =>
-                                                prev.filter(
-                                                  (item) => item.id !== ev.id
-                                                )
-                                              )
-                                            }
-                                            className="opacity-0 group-hover:opacity-100 text-white/50 hover:text-white"
-                                          >
-                                            <X className="w-3 h-3" />
-                                          </button>
-                                        )}
-                                      </div>
-                                    </div>
-                                  );
-                                })
-                              )}
-                            </div>
-
-                            {/* Bottom World Clocks Strip */}
-                            <div
-                              onClick={() => setShowWorldClocksDetail(true)}
-                              className="flex items-center justify-between pt-1 border-t border-white/10 text-[11px] cursor-pointer hover:text-white"
-                            >
-                              {[
-                                { city: 'NYC', tz: 'America/New_York' },
-                                { city: 'LON', tz: 'Europe/London' },
-                                { city: 'JKT', tz: 'Asia/Jakarta' },
-                                { city: 'TYO', tz: 'Asia/Tokyo' },
-                              ].map((c) => (
-                                <div key={c.city} className="flex items-center gap-1">
-                                  <span className="text-white/50 font-medium">
-                                    {c.city}
-                                  </span>
-                                  <span className="font-semibold tnum">
-                                    {nowDate.toLocaleTimeString('en-GB', {
-                                      timeZone: c.tz,
-                                      hour: '2-digit',
-                                      minute: '2-digit',
-                                    })}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* PAGE: AI USAGE */}
-                  {activePage === 'usage' && (
-                    <div className="h-full flex items-center justify-between gap-4">
-                      {(() => {
-                        const provider = usageProviders[usageProviderIdx];
-                        return (
-                          <>
-                            <div className="flex-1 space-y-3">
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                  <span
-                                    className="w-2.5 h-2.5 rounded-full"
-                                    style={{ backgroundColor: provider.color }}
-                                  />
-                                  <span className="text-[15px] font-bold tracking-tight">
-                                    {provider.name}
-                                  </span>
-                                  <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-semibold text-white/75">
-                                    {provider.plan}
-                                  </span>
-                                </div>
-                                <span className="text-[11px] text-white/50">
-                                  {provider.updated}
-                                </span>
-                              </div>
-
-                              <div className="space-y-2.5">
-                                {provider.limits.map((lim) => (
-                                  <div key={lim.label} className="space-y-1">
-                                    <div className="flex items-center justify-between text-[12.5px]">
-                                      <div className="flex items-center gap-2">
-                                        <span className="font-semibold">
-                                          {lim.label}
-                                        </span>
-                                        <span className="text-[11px] text-white/50">
-                                          {lim.reset}
-                                        </span>
-                                      </div>
-                                      <span
-                                        className={`font-bold tnum ${
-                                          lim.percent >= 80
-                                            ? 'text-[#ff453a]'
-                                            : 'text-white'
-                                        }`}
-                                      >
-                                        {lim.percent}%
-                                      </span>
-                                    </div>
-                                    <div className="w-full h-[5px] rounded-full bg-white/10 overflow-hidden">
-                                      <div
-                                        className="h-full rounded-full transition-all duration-300"
-                                        style={{
-                                          width: `${lim.percent}%`,
-                                          backgroundColor:
-                                            lim.percent >= 80
-                                              ? '#ff453a'
-                                              : provider.color,
-                                        }}
-                                      />
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-
-                            {/* Widget stack provider dots */}
-                            <div className="flex flex-col items-center gap-2 pl-2">
-                              {usageProviders.map((p, idx) => (
-                                <button
-                                  key={p.id}
-                                  onClick={() => setUsageProviderIdx(idx)}
-                                  className={`w-2 h-2 rounded-full transition ${
-                                    usageProviderIdx === idx
-                                      ? 'bg-white scale-125'
-                                      : 'bg-white/30 hover:bg-white/60'
-                                  }`}
-                                  title={`Switch to ${p.name}`}
-                                />
-                              ))}
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </IslandSurface>
-        </div>
-
-        {/* Right: GNOME System Status Icons */}
-        <div className="flex items-center gap-2.5 text-white/90">
-          {screenRecording && (
-            <button
-              onClick={() => setScreenRecording(false)}
-              className="px-2 py-0.5 rounded-full bg-[#d61f2d] text-white text-[11px] font-semibold flex items-center gap-1"
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-              <span>REC</span>
-            </button>
-          )}
-          <div className="flex items-center gap-2 px-2 py-0.5 rounded-full hover:bg-white/15 cursor-pointer transition">
-            <Wifi className="w-3.5 h-3.5" />
-            <Bluetooth className="w-3.5 h-3.5" />
-            <Volume2 className="w-3.5 h-3.5" />
-            <span className="text-[12px] tnum font-medium">86%</span>
-          </div>
-        </div>
-      </header>
-
-      {/* ── INTERACTIVE GNOME WORKSPACE & ISLE SIMULATOR CONTROLS ── */}
-      <main className="relative z-10 flex-1 flex flex-col items-center justify-end pb-7 px-6 pointer-events-none">
-        {/* Floating Bot Look & Architecture Showcase Card */}
-        <div className="pointer-events-auto w-full max-w-4xl rounded-3xl bg-[#11131a]/85 backdrop-blur-xl border border-white/10 shadow-2xl p-5 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-3.5">
-            <div className="flex items-center gap-3.5">
-              <BotCanvas
-                size={46}
-                shape={botShape}
-                color={botColor}
-                glowMode={botGlowMode}
-                form={botForm}
-                voiceLevel={voiceLevel}
-                gestureTrigger={botGesture}
-              />
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-base font-bold tracking-tight text-white">
-                    Isle — Notch Island for GNOME Shell 46–51
-                  </h1>
-                  <span className="px-2 py-0.5 rounded-full bg-white/10 text-[11px] font-mono text-white/80">
-                    v1.4.0 · isled D-Bus
-                  </span>
-                </div>
-                <p className="text-xs text-white/60 mt-0.5">
-                  Hover or click the black notch at the top of the screen to open the island, or trigger desktop events below.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => {
-                  setActiveAlert(null);
-                  setPinnedOpen(false);
-                  setVoiceOpen((v) => !v);
-                  setBotForm('listening');
-                }}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-white text-black hover:bg-white/90 text-xs font-semibold transition shadow"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Voice Assistant (Alt+I)</span>
-              </button>
-              <button
-                onClick={() => setSettingsOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/15 text-xs font-semibold transition"
-              >
-                <Settings className="w-3.5 h-3.5" />
-                <span>Settings</span>
-              </button>
+              )}
             </div>
           </div>
+        );
 
-          {/* Interactive Desktop Event Triggers */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-            {/* Column 1: Peek Alerts */}
-            <div className="rounded-2xl bg-white/[0.04] border border-white/8 p-3.5 space-y-2.5">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">
-                Trigger Notch Alerts (Peek)
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                <button
-                  onClick={() =>
-                    triggerAlert(
-                      {
-                        id: 'claude-hook',
-                        kind: 'agent-ask',
-                        title: 'isle-daemon needs permission',
-                        agentName: 'Claude Code',
-                        codeLine: 'cargo test --workspace --all-targets',
-                        accentColor: '#d97757',
-                      },
-                      0
-                    )
-                  }
-                  className="px-2.5 py-1.5 rounded-xl bg-[#d97757]/20 hover:bg-[#d97757]/30 border border-[#d97757]/30 font-semibold text-white transition"
-                >
-                  Claude Code Approval Hook
-                </button>
-                <button
-                  onClick={() =>
-                    triggerAlert(
-                      {
-                        id: 'meeting-soon',
-                        kind: 'meeting',
-                        title: 'Weekly sync in 5 min',
-                        subtitle: '14:00 – 14:45 · Google Meet',
-                        accentColor: '#0a84ff',
-                        meetingUrl: 'https://meet.google.com/isle-gnome-sync',
-                      },
-                      8000
-                    )
-                  }
-                  className="px-2.5 py-1.5 rounded-xl bg-[#0a84ff]/20 hover:bg-[#0a84ff]/30 border border-[#0a84ff]/30 font-semibold text-white transition"
-                >
-                  Meeting Join Alert
-                </button>
-                <button
-                  onClick={() =>
-                    triggerAlert({
-                      id: 'charging',
-                      kind: 'charging',
-                      title: 'Charging',
-                      subtitle: 'Charger connected',
-                      valueText: '76%',
-                      accentColor: '#30d158',
-                    })
-                  }
-                  className="px-2.5 py-1.5 rounded-xl bg-white/8 hover:bg-white/15 font-medium transition"
-                >
-                  Charging (76%)
-                </button>
-                <button
-                  onClick={() =>
-                    triggerAlert({
-                      id: 'low-bat',
-                      kind: 'low-battery',
-                      title: 'Low Battery',
-                      subtitle: 'Plug in your charger soon',
-                      valueText: '10%',
-                      accentColor: '#ff453a',
-                    })
-                  }
-                  className="px-2.5 py-1.5 rounded-xl bg-white/8 hover:bg-white/15 font-medium transition"
-                >
-                  Low Battery (10%)
-                </button>
-                <button
-                  onClick={() => {
-                    const nextVol = volume >= 100 ? 100 : Math.min(100, volume + 15);
-                    if (nextVol === 100) setNudgeCount((n) => n + 1);
-                    setVolume(nextVol);
-                    triggerAlert(
-                      {
-                        id: 'vol',
-                        kind: 'volume',
-                        title: 'Volume',
-                        subtitle: 'AirBuds Pro',
-                        level: nextVol,
-                        accentColor: '#2c2c2e',
-                      },
-                      1800
-                    );
-                  }}
-                  className="px-2.5 py-1.5 rounded-xl bg-white/8 hover:bg-white/15 font-medium transition"
-                >
-                  Volume + Rubber-Band Nudge
-                </button>
-                <button
-                  onClick={() =>
-                    triggerAlert({
-                      id: 'earbuds',
-                      kind: 'earbuds',
-                      title: 'AirBuds Pro',
-                      subtitle: 'Connected',
-                      valueText: '70%',
-                      accentColor: '#30d158',
-                    })
-                  }
-                  className="px-2.5 py-1.5 rounded-xl bg-white/8 hover:bg-white/15 font-medium transition"
-                >
-                  Earbuds Connected
-                </button>
-              </div>
-            </div>
-
-            {/* Column 2: Live Activities & Pages */}
-            <div className="rounded-2xl bg-white/[0.04] border border-white/8 p-3.5 space-y-2.5">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-white/45">
-                Live Activities & Quick Pages
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                <button
-                  onClick={() => {
-                    const next = !callActive;
-                    setCallActive(next);
-                    if (next) {
-                      setCallSeconds(1);
-                      setActivePage('call');
-                      setPinnedOpen(true);
-                    }
-                  }}
-                  className={`px-2.5 py-1.5 rounded-xl font-semibold transition ${
-                    callActive
-                      ? 'bg-[#30d158] text-black'
-                      : 'bg-white/8 hover:bg-white/15 text-white'
-                  }`}
-                >
-                  {callActive ? 'End Active Call' : 'Start Live Call'}
-                </button>
-                <button
-                  onClick={() => {
-                    setActivePage('music');
-                    setLyricsMode(true);
-                    setPinnedOpen(true);
-                  }}
-                  className="px-2.5 py-1.5 rounded-xl bg-white/8 hover:bg-white/15 font-medium transition"
-                >
-                  Synced Lyrics (720px)
-                </button>
-                <button
-                  onClick={handleDropSampleFile}
-                  className="px-2.5 py-1.5 rounded-xl bg-white/8 hover:bg-white/15 font-medium transition"
-                >
-                  Drop File on Shelf
-                </button>
-                <button
-                  onClick={() =>
-                    setPrivacyDots((p) => ({
-                      camera: !p.camera,
-                      microphone: !p.microphone,
-                      screenShare: false,
-                    }))
-                  }
-                  className={`px-2.5 py-1.5 rounded-xl font-medium transition ${
-                    privacyDots.camera
-                      ? 'bg-[#ff9f0a]/25 border border-[#ff9f0a]/50 text-[#ff9f0a]'
-                      : 'bg-white/8 hover:bg-white/15'
-                  }`}
-                >
-                  Privacy Dots (Cam/Mic)
-                </button>
-                <button
-                  onClick={() => setScreenRecording((r) => !r)}
-                  className={`px-2.5 py-1.5 rounded-xl font-medium transition ${
-                    screenRecording
-                      ? 'bg-[#ff453a] text-white'
-                      : 'bg-white/8 hover:bg-white/15'
-                  }`}
-                >
-                  {screenRecording ? 'Stop Screen Rec' : 'Screen Recording'}
-                </button>
-              </div>
-            </div>
-
-            {/* Column 3: Bot Shape & Color Customizer */}
-            <div className="rounded-2xl bg-white/[0.04] border border-white/8 p-3.5 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-white/45">
-                  Bot Character (8 Shapes · 11 Colors)
-                </span>
-                <span className="text-[11px] text-white/60">
-                  {SHAPES[botShape].label} · {COLORS[botColor].label}
-                </span>
-              </div>
-
-              {/* Shapes */}
-              <div className="flex flex-wrap gap-1">
-                {(Object.keys(SHAPES) as BotShapeName[]).map((sh) => (
-                  <button
-                    key={sh}
-                    onClick={() => setBotShape(sh)}
-                    className={`px-2 py-0.5 rounded-lg text-[11px] font-medium transition ${
-                      botShape === sh
-                        ? 'bg-white text-black font-semibold'
-                        : 'bg-white/8 hover:bg-white/15 text-white/75'
-                    }`}
-                  >
-                    {SHAPES[sh].label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Colors */}
-              <div className="flex items-center gap-1.5 pt-0.5">
-                {(Object.keys(COLORS) as BotColorName[]).map((cKey) => (
-                  <button
-                    key={cKey}
-                    onClick={() => setBotColor(cKey)}
-                    style={{ backgroundColor: COLORS[cKey].body }}
-                    className={`w-4 h-4 rounded-full transition-transform ${
-                      botColor === cKey
-                        ? 'scale-125 ring-2 ring-white ring-offset-1 ring-offset-black'
-                        : 'opacity-75 hover:opacity-100'
-                    }`}
-                    title={COLORS[cKey].label}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </main>
-
-      {/* ── ISLE SETTINGS MODAL (gnome-extension/prefs.js equivalent) ── */}
-      {settingsOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={() => setSettingsOpen(false)}
-        >
+      case 'shelf':
+        return (
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg rounded-3xl bg-[#1c1c1e] border border-white/12 shadow-2xl p-6 space-y-5 text-sm"
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setIsDragOver(true);
+            }}
+            onDragLeave={(e) => {
+              e.stopPropagation();
+              const rect = e.currentTarget.getBoundingClientRect();
+              if (
+                e.clientX <= rect.left ||
+                e.clientX >= rect.right ||
+                e.clientY <= rect.top ||
+                e.clientY >= rect.bottom
+              ) {
+                setIsDragOver(false);
+              }
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setIsDragOver(false);
+
+              const sampleJson = e.dataTransfer?.getData('application/x-isle-file');
+              if (sampleJson) {
+                try {
+                  const parsed = JSON.parse(sampleJson);
+                  if (parsed && typeof parsed.name === 'string') {
+                    addFilesToShelf([
+                      {
+                        name: parsed.name,
+                        size: parsed.size || '1.0 MB',
+                        ext: parsed.ext || detectFileExt(parsed.name),
+                      },
+                    ]);
+                    return;
+                  }
+                } catch {
+                  // ignore
+                }
+              }
+
+              const dropped = Array.from(e.dataTransfer?.files || []);
+              if (dropped.length > 0) {
+                addFilesToShelf(
+                  dropped.map((f) => ({
+                    name: f.name,
+                    size: formatBytes(f.size),
+                    ext: detectFileExt(f.name),
+                  }))
+                );
+              }
+            }}
+            className="relative w-full h-full flex items-center justify-center px-10 py-1.5"
           >
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div>
-                <h2 className="text-base font-bold">Isle Preferences</h2>
-                <p className="text-xs text-white/55">
-                  org.gnome.shell.extensions.isle
-                </p>
+            {/* Optional Toast if Shelf is full */}
+            {shelfToast && (
+              <div className="absolute top-0.5 right-12 z-30 px-2.5 py-0.5 rounded-full bg-white/15 text-[10px] font-semibold text-white">
+                {shelfToast}
               </div>
-              <button
-                onClick={() => setSettingsOpen(false)}
-                className="p-1.5 rounded-full bg-white/10 hover:bg-white/20"
+            )}
+
+            {/* Base Shelf Area: Empty Prompt OR Staged Document File Cards (Matches 00:04 & 00:10-00:13) */}
+            {shelfFiles.length === 0 && !isDragOver ? (
+              <div
+                onClick={() => {
+                  addFilesToShelf([SAMPLE_DRAGGABLE_FILES[0]]);
+                }}
+                className="w-full h-[108px] rounded-2xl border border-dashed border-white/25 bg-white/[0.02] hover:border-white/40 hover:bg-white/[0.04] transition-all flex flex-col items-center justify-center cursor-pointer"
               >
-                <X className="w-4 h-4" />
-              </button>
+                <div className="text-white/85 mb-1.5">
+                  <ShelfTraySvg size={22} />
+                </div>
+                <div className="text-[12.5px] font-semibold text-white">Drop files here</div>
+                <div className="text-[10.5px] text-white/40 mt-0.5">
+                  Drag out anytime · click to open
+                </div>
+              </div>
+            ) : (
+              <div className="w-full h-[108px] flex items-center justify-start gap-4 px-2 overflow-x-auto no-scrollbar">
+                {shelfFiles.map((file) => (
+                  <div
+                    key={file.id}
+                    draggable
+                    onDragStart={(ev) => {
+                      ev.dataTransfer.setData('text/plain', file.name);
+                      ev.dataTransfer.effectAllowed = 'copyMove';
+                    }}
+                    style={{
+                      animation: 'shelfFilePopIn 280ms cubic-bezier(0.22, 1.35, 0.36, 1) both',
+                    }}
+                    className="relative group flex flex-col items-center w-[72px] shrink-0 cursor-grab active:cursor-grabbing py-1 rounded-xl hover:bg-white/[0.06] transition"
+                    title={`${file.name} (${file.size}) — Drag out or click × to remove`}
+                  >
+                    <div className="relative flex items-center justify-center drop-shadow-md group-hover:scale-105 transition-transform">
+                      <FileDocumentBadgeSvg ext={file.ext} size={42} />
+                    </div>
+                    <span className="text-[11px] font-semibold text-white/90 truncate w-full text-center mt-1.5 leading-tight">
+                      {truncateMiddleFileName(file.name, 11)}
+                    </span>
+                    <span className="text-[9.5px] font-medium text-white/45 tabular-nums leading-tight mt-0.5">
+                      {file.size}
+                    </span>
+                    <button
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        setShelfFiles((prev) => prev.filter((f) => f.id !== file.id));
+                      }}
+                      className="opacity-0 group-hover:opacity-100 absolute top-0.5 right-1 w-4 h-4 rounded-full bg-black/90 border border-white/25 flex items-center justify-center text-white/80 hover:text-white transition"
+                      title="Remove from Shelf"
+                    >
+                      <CloseCrossSvg size={9} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Active Drag-Over Overlay ("Release to add") — Dims existing files behind dashed box (Matches 00:08 & 00:12) */}
+            {isDragOver && (
+              <div className="absolute inset-x-10 inset-y-1.5 z-20 rounded-2xl border-[1.5px] border-dashed border-white/65 bg-black/75 backdrop-blur-[2px] flex flex-col items-center justify-center pointer-events-none animate-[ isleFadeIn_140ms_ease-out ]">
+                <div
+                  className="text-white mb-1.5"
+                  style={{ animation: 'shelfTrayBounce 0.9s ease-in-out infinite' }}
+                >
+                  <ShelfTraySvg size={23} />
+                </div>
+                <div className="text-[13px] font-semibold text-white tracking-tight">
+                  Release to add
+                </div>
+              </div>
+            )}
+          </div>
+        );
+
+      case 'calendar':
+        return (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full h-full flex items-stretch justify-between px-9 py-0.5 gap-4 overflow-hidden"
+          >
+            {/* Compact Left Calendar Grid (Fits 6 weeks cleanly inside 170px uniform island height with zero clipping) */}
+            <div className="w-[162px] shrink-0 flex flex-col justify-between py-0.5">
+              <div className="flex items-center justify-between leading-none">
+                <div
+                  onClick={() => {
+                    setCalYear(nowDate.getFullYear());
+                    setCalMonth(nowDate.getMonth());
+                    setSelectedDay(nowDate.getDate());
+                  }}
+                  title="Jump to Today"
+                  className="text-[10px] font-bold tracking-wider cursor-pointer"
+                >
+                  <span className="text-[#ff453a]">{MONTH_NAMES[calMonth]}</span>{' '}
+                  <span className="text-white/50 font-semibold">{calYear}</span>
+                </div>
+                <div className="flex items-center gap-1 text-white/60">
+                  <button
+                    onClick={() => {
+                      if (calMonth === 0) {
+                        setCalMonth(11);
+                        setCalYear((y) => y - 1);
+                      } else {
+                        setCalMonth((m) => m - 1);
+                      }
+                    }}
+                    className="hover:text-white transition p-0.5"
+                  >
+                    <ChevronLeftSvg size={10} />
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (calMonth === 11) {
+                        setCalMonth(0);
+                        setCalYear((y) => y + 1);
+                      } else {
+                        setCalMonth((m) => m + 1);
+                      }
+                    }}
+                    className="hover:text-white transition p-0.5"
+                  >
+                    <ChevronRightSvg size={10} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-7 text-center text-[8.5px] font-semibold text-white/40 leading-none my-0.5">
+                <span>S</span>
+                <span>M</span>
+                <span>T</span>
+                <span>W</span>
+                <span>T</span>
+                <span>F</span>
+                <span>S</span>
+              </div>
+
+              <div className="grid grid-cols-7 gap-y-[1px] text-center tabular-nums">
+                {calendarCells.map((day, idx) => {
+                  if (!day) return <div key={idx} className="h-[14.5px]" />;
+                  const isToday =
+                    calYear === nowDate.getFullYear() &&
+                    calMonth === nowDate.getMonth() &&
+                    day === nowDate.getDate();
+                  const isSelected = day === selectedDay;
+                  const hasEvents =
+                    (eventsByDate[`${calYear}-${calMonth}-${day}`]?.length || 0) > 0;
+                  const isWeekend = idx % 7 === 0 || idx % 7 === 6;
+
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => setSelectedDay(day)}
+                      className={`relative h-[14.5px] w-[14.5px] mx-auto rounded-full flex flex-col items-center justify-center text-[9px] font-semibold transition ${
+                        isToday
+                          ? 'bg-[#ff453a] text-white font-bold'
+                          : isSelected
+                          ? 'bg-white/20 text-white'
+                          : isWeekend
+                          ? 'text-white/40 hover:text-white'
+                          : 'text-white/85 hover:bg-white/10'
+                      }`}
+                    >
+                      <span className="leading-none">{day}</span>
+                      {hasEvents && (
+                        <span
+                          className={`w-1 h-1 rounded-full absolute bottom-0 ${
+                            isToday ? 'bg-white' : 'bg-[#ff9f0a]'
+                          }`}
+                        />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
-            <div className="space-y-4">
-              {/* Top Bar Glass-to-Black Slider */}
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <div className="font-semibold">Top bar opacity (Glass to Black)</div>
-                  <div className="text-xs text-white/50">
-                    All the way to black, the shoulders curve out of the bar's lower edge
-                  </div>
-                </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={barOpacity}
-                  onChange={(e) => setBarOpacity(Number(e.target.value))}
-                  className="w-28 accent-white"
-                />
-              </div>
-
-              {/* Compact Position */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-semibold">Closed island hangs below top bar</div>
-                  <div className="text-xs text-white/50">
-                    164 × (P + 28) with 10px concave shoulders instead of inside the bar
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={hangingCompact}
-                  onChange={(e) => setHangingCompact(e.target.checked)}
-                  className="w-4 h-4 accent-[#0a84ff]"
-                />
-              </div>
-
-              {/* Open on pointer rest */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-semibold">Open when pointer rests on notch (120 ms)</div>
-                  <div className="text-xs text-white/50">
-                    Passing over it on the way elsewhere leaves it closed
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={openOnHover}
-                  onChange={(e) => setOpenOnHover(e.target.checked)}
-                  className="w-4 h-4 accent-[#0a84ff]"
-                />
-              </div>
-
-              {/* 24-hour clock */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-semibold">24-hour clock</div>
-                  <div className="text-xs text-white/50">
-                    Tabular figures ("tnum") so digits never jump
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={use24Hour}
-                  onChange={(e) => setUse24Hour(e.target.checked)}
-                  className="w-4 h-4 accent-[#0a84ff]"
-                />
-              </div>
-
-              {/* Bot Glow Mode */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-semibold">Assistant Aura Glow</div>
-                  <div className="text-xs text-white/50">
-                    Match the bot's color palette or use classic violet/blue/cyan
-                  </div>
-                </div>
-                <div className="flex items-center bg-[#2c2c2e] p-0.5 rounded-full text-xs">
+            {/* Right Column: Events, Smart Alarms & World Clocks */}
+            <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5 overflow-hidden">
+              <div className="flex items-center justify-between gap-1.5 shrink-0 whitespace-nowrap leading-none">
+                <div className="flex items-center gap-1.5 shrink-0">
                   <button
-                    onClick={() => setBotGlowMode('match')}
-                    className={`px-3 py-1 rounded-full font-semibold ${
-                      botGlowMode === 'match' ? 'bg-white text-black' : 'text-white/70'
+                    onClick={() => setCalendarSubTab('events')}
+                    className={`text-[11px] font-bold tracking-tight transition whitespace-nowrap ${
+                      calendarSubTab === 'events'
+                        ? 'text-white'
+                        : 'text-white/40 hover:text-white/70'
                     }`}
                   >
-                    Match Bot
+                    Events ({selectedDayEvents.length})
                   </button>
+                  <span className="text-white/20 select-none text-[10px]">|</span>
                   <button
-                    onClick={() => setBotGlowMode('classic')}
-                    className={`px-3 py-1 rounded-full font-semibold ${
-                      botGlowMode === 'classic' ? 'bg-white text-black' : 'text-white/70'
+                    onClick={() => setCalendarSubTab('alarms')}
+                    className={`flex items-center gap-1 text-[11px] font-bold tracking-tight transition whitespace-nowrap ${
+                      calendarSubTab === 'alarms'
+                        ? 'text-[#ff9f0a]'
+                        : 'text-white/40 hover:text-white/70'
                     }`}
                   >
-                    Classic
+                    <AlarmBellSvg size={10} />
+                    <span>Alarms ({smartAlarms.length})</span>
                   </button>
                 </div>
+
+                <button
+                  onClick={() => setShowWorldClocks((w) => !w)}
+                  title={showWorldClocks ? 'Sembunyikan Jam Dunia' : 'Tampilkan Jam Dunia'}
+                  className={`p-0.5 rounded transition shrink-0 ${
+                    showWorldClocks
+                      ? 'bg-white/15 text-white'
+                      : 'text-white/45 hover:text-white/80'
+                  }`}
+                >
+                  <GlobeTimezoneSvg size={12} />
+                </button>
               </div>
+
+              {calendarSubTab === 'events' ? (
+                <>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleAddCalendarEvent(newEventInput);
+                    }}
+                    className="flex items-center gap-1.5 bg-[#1c1c21] border border-white/[0.06] rounded-full px-2.5 py-0.5 my-1 shrink-0"
+                  >
+                    <span className="text-white/45">
+                      <PlusSvg size={10} />
+                    </span>
+                    <input
+                      type="text"
+                      value={newEventInput}
+                      onChange={(e) => setNewEventInput(e.target.value)}
+                      placeholder="Add event · e.g. Dinner 20:00"
+                      className="flex-1 min-w-0 bg-transparent text-[10.5px] text-white placeholder-white/35 focus:outline-none"
+                    />
+                  </form>
+
+                  <div className="flex-1 min-h-0 space-y-1 overflow-y-auto no-scrollbar">
+                    {selectedDayEvents.length === 0 ? (
+                      <div className="text-[10.5px] text-white/35 py-0.5 truncate">
+                        No events scheduled for this day
+                      </div>
+                    ) : (
+                      selectedDayEvents.map((ev) => (
+                        <div
+                          key={ev.id}
+                          className="group flex items-center justify-between bg-[#2b1e0e] hover:bg-[#352512] rounded-lg px-2 py-0.5 transition"
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="w-[2.5px] h-3 rounded-full bg-[#ff9f0a] shrink-0" />
+                            <span className="text-[10.5px] font-bold text-white truncate">
+                              {ev.title}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span className="text-[10px] text-white/65 tabular-nums">{ev.time}</span>
+                            <button
+                              onClick={() =>
+                                setEventsByDate((prev) => ({
+                                  ...prev,
+                                  [currentDateKey]: (prev[currentDateKey] || []).filter(
+                                    (item) => item.id !== ev.id
+                                  ),
+                                }))
+                              }
+                              className="hidden group-hover:inline-flex text-white/45 hover:text-white"
+                            >
+                              <CloseCrossSvg size={9} />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleAddSmartAlarm(newAlarmTime, newAlarmTitle);
+                    }}
+                    className="flex items-center gap-1 bg-[#1c1c21] border border-white/[0.08] rounded-full px-2 py-0.5 my-1 shrink-0"
+                  >
+                    <input
+                      type="time"
+                      value={newAlarmTime}
+                      onChange={(e) => setNewAlarmTime(e.target.value)}
+                      className="bg-white/10 text-white text-[10px] font-mono font-semibold rounded px-1 py-0.2 focus:outline-none shrink-0"
+                      title="Waktu alarm (HH:mm)"
+                    />
+                    <input
+                      type="text"
+                      value={newAlarmTitle}
+                      onChange={(e) => setNewAlarmTitle(e.target.value)}
+                      placeholder="Nama alarm..."
+                      className="flex-1 min-w-0 bg-transparent text-[10.5px] text-white placeholder-white/35 focus:outline-none px-1"
+                    />
+                    <button
+                      type="submit"
+                      className="px-2 py-0.5 rounded-full bg-[#ff9f0a] hover:bg-[#ff9000] text-black text-[9.5px] font-bold transition shrink-0"
+                    >
+                      + Set
+                    </button>
+                  </form>
+
+                  <div className="flex-1 min-h-0 space-y-1 overflow-y-auto no-scrollbar">
+                    {smartAlarms.length === 0 ? (
+                      <div className="text-[10.5px] text-white/35 py-0.5 flex items-center gap-1">
+                        <AlarmBellSvg size={11} />
+                        <span className="truncate">Belum ada alarm aktif</span>
+                      </div>
+                    ) : (
+                      smartAlarms.map((a) => (
+                        <div
+                          key={a.id}
+                          className={`group flex items-center justify-between rounded-lg px-2 py-0.5 transition ${
+                            a.enabled
+                              ? 'bg-[#2b1e0e] hover:bg-[#352512]'
+                              : 'bg-white/[0.03] hover:bg-white/[0.06] opacity-60'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                            <span
+                              className={`w-[2.5px] h-3 rounded-full shrink-0 ${
+                                a.enabled ? 'bg-[#ff9f0a]' : 'bg-white/30'
+                              }`}
+                            />
+                            <span className="text-[10.5px] font-bold text-white tabular-nums shrink-0">
+                              {a.time}
+                            </span>
+                            <span className="text-[10px] text-white/70 truncate flex-1">
+                              {a.title}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              onClick={() => handleToggleAlarm(a.id)}
+                              className={`w-5 h-3 rounded-full p-0.5 transition ${
+                                a.enabled ? 'bg-[#ff9f0a]' : 'bg-white/20'
+                              }`}
+                            >
+                              <div
+                                className={`w-2 h-2 rounded-full bg-white transition-transform ${
+                                  a.enabled ? 'translate-x-2' : 'translate-x-0'
+                                }`}
+                              />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteAlarm(a.id)}
+                              className="text-white/40 hover:text-white transition"
+                            >
+                              <CloseCrossSvg size={9} />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+
+              {showWorldClocks && (
+                <div className="pt-0.5 mt-0.5 border-t border-white/10 flex items-center justify-between text-[9.5px] tabular-nums shrink-0">
+                  {worldClocks.map((wc) => (
+                    <div key={wc.city} className="flex items-center gap-1">
+                      <span className="text-white/45">{wc.city}</span>
+                      <span className="text-white font-bold">{wc.time}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
-        </div>
+        );
+    }
+  };
+
+  return (
+    <div
+      className="relative w-screen h-screen bg-transparent overflow-hidden select-none font-sans pointer-events-none"
+    >
+      {/* ── Top-Center Dynamic Island Anchor (Flush at top: 0, horizontally centered) ── */}
+      <div className="relative z-40 w-full flex justify-center items-start pt-0 pointer-events-none">
+        <IslandSurface
+          width={targetW}
+          height={targetH}
+          radius={targetR}
+          shoulder={targetS}
+          topInset={0}
+          tintStyle={tintStyle}
+          tintRgb={tintRgb}
+          auraColors={botPalette.glow}
+          voiceLevel={voiceEnergy}
+          nudgeTrigger={nudgeCount}
+          onMouseEnter={() => {
+            setDesktopClickThrough(false);
+            if (activeAlert) {
+              setAlertHovered(true);
+            } else {
+              setIsHovered(true);
+            }
+          }}
+          onMouseLeave={() => {
+            setDesktopClickThrough(true);
+            if (activeAlert) {
+              setAlertHovered(false);
+            } else {
+              if (lyricsMode) {
+                // Keep Island open while in lyrics view per user requirement
+                return;
+              }
+              setIsHovered(false);
+              setIsDragOver(false);
+              if (dragAutoOpened) {
+                setDragAutoOpened(false);
+              }
+            }
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (activeAlert) {
+              if (activeAlert.type === 'meeting') {
+                setActiveAlert(null);
+                navigateToPage(5);
+                setIsPinnedOpen(true);
+              } else if (activeAlert.type === 'notification') {
+                setActiveAlert(null);
+                navigateToPage(1);
+                setIsPinnedOpen(true);
+              }
+              return;
+            }
+            if (!isPinnedOpen) setIsPinnedOpen(true);
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            if (activeAlert) {
+              setActiveAlert(null);
+            } else if (!lyricsMode) {
+              setIsPinnedOpen((p) => !p);
+              setIsHovered(false);
+              setDragAutoOpened(false);
+            }
+          }}
+        >
+          {/* =========================================================
+              1. SYSTEM ALERTS (Slim Hardware HUD & Rich Peek Alerts)
+             ========================================================= */}
+          {activeAlert && (
+            <div className="w-full h-full flex items-center justify-between px-4 animate-[ isleFadeIn_160ms_ease-out ]">
+              {(activeAlert.type === 'volume' ||
+                activeAlert.type === 'mute' ||
+                activeAlert.type === 'brightness') && (
+                <div
+                  onWheel={(e) => {
+                    e.stopPropagation();
+                    if (activeAlert.type === 'brightness') {
+                      setBrightness((b) => {
+                        const next =
+                          e.deltaY < 0 ? Math.min(10, b + 1) : Math.max(0, b - 1);
+                        triggerAlert('brightness', { value: next });
+                        return next;
+                      });
+                    } else {
+                      setVolume((v) => {
+                        const next =
+                          e.deltaY < 0 ? Math.min(100, v + 2) : Math.max(0, v - 2);
+                        setMuted(next === 0);
+                        triggerAlert('volume', { value: next, muted: next === 0 });
+                        return next;
+                      });
+                    }
+                  }}
+                  className="w-full flex items-center gap-3 px-1"
+                >
+                  <div className="text-white shrink-0 flex items-center justify-center">
+                    {activeAlert.type === 'brightness' ? (
+                      <SunBrightnessSvg size={17} />
+                    ) : (
+                      <SpeakerWaveSvg
+                        size={17}
+                        level={activeAlert.value ?? volume}
+                        muted={activeAlert.muted ?? muted}
+                      />
+                    )}
+                  </div>
+                  <div className="flex-1 h-[5.5px] bg-[#3a3a3e] rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-white rounded-full transition-all duration-100 ease-out"
+                      style={{
+                        width: `${
+                          activeAlert.type === 'brightness'
+                            ? Math.min(100, Math.max(0, ((activeAlert.value ?? brightness) / 10) * 100))
+                            : activeAlert.muted
+                            ? 0
+                            : Math.min(100, Math.max(0, activeAlert.value ?? volume))
+                        }%`,
+                      }}
+                    />
+                  </div>
+                  <span className="text-[11.5px] font-bold text-white/90 tabular-nums w-6 text-right shrink-0">
+                    {activeAlert.type === 'brightness'
+                      ? activeAlert.value ?? brightness
+                      : activeAlert.muted
+                      ? 0
+                      : activeAlert.value ?? volume}
+                  </span>
+                </div>
+              )}
+
+              {activeAlert.type === 'capslock' && (
+                <div className="w-full flex items-center justify-between px-1">
+                  <div className="flex items-center gap-2.5 text-white">
+                    <CapsLockArrowSvg size={16} />
+                    <span className="text-[12.5px] font-semibold tracking-tight text-white">
+                      Caps Lock {activeAlert.capsOn ? 'On' : 'Off'}
+                    </span>
+                  </div>
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      activeAlert.capsOn ? 'bg-[#30d158]' : 'bg-white/25'
+                    }`}
+                  />
+                </div>
+              )}
+
+              {(activeAlert.type === 'charging' || activeAlert.type === 'lowbattery') && (
+                <div className="w-full flex items-center justify-between gap-3 px-1">
+                  <div className="flex items-center gap-2.5 shrink-0">
+                    <div className="relative w-8 h-8 flex items-center justify-center">
+                      <svg width={32} height={32} className="-rotate-90">
+                        <circle
+                          cx={16}
+                          cy={16}
+                          r={13}
+                          fill="none"
+                          stroke={
+                            (activeAlert.value ?? batteryLevel) <= 20 && !isCharging
+                              ? 'rgba(255,69,58,0.22)'
+                              : 'rgba(48,209,88,0.22)'
+                          }
+                          strokeWidth={2.6}
+                        />
+                        <circle
+                          cx={16}
+                          cy={16}
+                          r={13}
+                          fill="none"
+                          stroke={
+                            (activeAlert.value ?? batteryLevel) <= 20 && !isCharging
+                              ? '#ff453a'
+                              : '#30d158'
+                          }
+                          strokeWidth={2.6}
+                          strokeDasharray={2 * Math.PI * 13}
+                          strokeDashoffset={
+                            2 * Math.PI * 13 * (1 - (activeAlert.value ?? batteryLevel) / 100)
+                          }
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      <span
+                        className={`absolute ${
+                          (activeAlert.value ?? batteryLevel) <= 20 && !isCharging
+                            ? 'text-[#ff453a]'
+                            : 'text-[#30d158]'
+                        }`}
+                      >
+                        <BoltChargingSvg size={13} />
+                      </span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-[12px] font-semibold text-white leading-tight">
+                        {isCharging
+                          ? 'Charging'
+                          : (activeAlert.value ?? batteryLevel) <= 20
+                          ? 'Low Battery'
+                          : 'On Battery'}
+                      </span>
+                      <span className="text-[10px] text-white/50 leading-tight">
+                        {isCharging
+                          ? 'Plugged into AC power'
+                          : (activeAlert.value ?? batteryLevel) <= 20
+                          ? 'Plug in charger soon'
+                          : 'Laptop battery active'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Real Laptop Battery Progress Bar + Percentage */}
+                  <div className="flex-1 flex items-center gap-2.5 min-w-[90px]">
+                    <div className="flex-1 h-[6px] bg-white/15 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-300"
+                        style={{
+                          width: `${Math.min(100, Math.max(0, activeAlert.value ?? batteryLevel))}%`,
+                          backgroundColor:
+                            (activeAlert.value ?? batteryLevel) <= 15 && !isCharging
+                              ? '#ff453a'
+                              : (activeAlert.value ?? batteryLevel) <= 30 && !isCharging
+                              ? '#ff9f0a'
+                              : '#30d158',
+                        }}
+                      />
+                    </div>
+                    <span className="text-[13.5px] font-bold text-white tabular-nums shrink-0">
+                      {activeAlert.value ?? batteryLevel}%
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {activeAlert.type === 'meeting' && (
+                <div className="w-full flex items-center justify-between px-0.5">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-full bg-[#0a84ff]/20 text-[#389bff] flex items-center justify-center shrink-0">
+                      <VideoCameraSvg size={15} />
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-[12.5px] font-semibold text-white truncate leading-tight">
+                        Weekly sync in 5 min
+                      </span>
+                      <span className="text-[11px] text-white/50 truncate leading-tight tabular-nums">
+                        01:53 – 02:23 · Google Meet
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveAlert(null);
+                      navigateToPage(5);
+                      setIsPinnedOpen(true);
+                    }}
+                    className="px-3.5 py-1 rounded-full bg-[#1a73e8] hover:bg-[#2580f5] text-white text-[12px] font-semibold transition shrink-0"
+                  >
+                    Join
+                  </button>
+                </div>
+              )}
+
+              {activeAlert.type === 'notification' && (
+                <div className="w-full flex items-center justify-between px-0.5">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-full bg-white/10 text-white flex items-center justify-center shrink-0">
+                      <MailEnvelopeSvg size={14} />
+                    </div>
+                    <div className="flex flex-col min-w-0 pr-2">
+                      <span className="text-[12.5px] font-semibold text-white leading-tight">
+                        Ana
+                      </span>
+                      <span className="text-[11px] text-white/55 truncate leading-tight">
+                        Lunch at 12? I booked the place by the park...
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveAlert(null);
+                      navigateToPage(1);
+                      setIsPinnedOpen(true);
+                    }}
+                    className="px-3 py-1 rounded-full bg-white/12 hover:bg-white/20 text-white text-[11.5px] font-medium transition shrink-0"
+                  >
+                    Reply
+                  </button>
+                </div>
+              )}
+
+              {activeAlert.type === 'permission' && (
+                <div className="w-full h-full flex items-center gap-3.5 py-2.5 px-1">
+                  <div className="relative shrink-0">
+                    <BotCanvas
+                      size={40}
+                      shape={botShape}
+                      color={botColor}
+                      form={
+                        activeAlert.permissionState === 'allowed'
+                          ? 'success'
+                          : activeAlert.permissionState === 'denied'
+                          ? 'error'
+                          : 'asking'
+                      }
+                      voiceLevel={0}
+                    />
+                    <span
+                      className={`absolute -top-0.5 -left-0.5 w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                        activeAlert.permissionState === 'allowed'
+                          ? 'bg-[#30d158] text-black'
+                          : activeAlert.permissionState === 'denied'
+                          ? 'bg-[#ff453a] text-white'
+                          : 'bg-[#ff9f0a] text-black'
+                      }`}
+                    >
+                      {activeAlert.permissionState === 'allowed' ? (
+                        <CheckTickSvg size={10} />
+                      ) : activeAlert.permissionState === 'denied' ? (
+                        <CloseCrossSvg size={10} />
+                      ) : (
+                        '!'
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="flex-1 min-w-0 flex flex-col justify-between h-full">
+                    <div>
+                      <div className="text-[12.5px] font-semibold text-white leading-tight">
+                        shop needs permission
+                      </div>
+                      <div className="text-[10.5px] text-white/45 leading-tight">
+                        Isle Assistant · Windows
+                      </div>
+                    </div>
+
+                    <div className="inline-flex items-center px-2 py-0.5 rounded bg-white/[0.08] font-mono text-[11px] text-white/90 w-fit">
+                      git push origin main
+                    </div>
+
+                    <div className="flex items-center gap-1.5 pt-0.5">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveAlert((a) => (a ? { ...a, permissionState: 'denied' } : null));
+                          setTimeout(() => setActiveAlert(null), 700);
+                        }}
+                        className="px-3 py-0.5 rounded-full bg-white/10 hover:bg-white/16 text-white/85 text-[11px] font-medium transition"
+                      >
+                        Deny
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveAlert((a) => (a ? { ...a, permissionState: 'allowed' } : null));
+                          setTimeout(() => setActiveAlert(null), 700);
+                        }}
+                        className="px-3 py-0.5 rounded-full bg-white/12 hover:bg-white/20 text-white text-[11px] font-medium transition"
+                      >
+                        Allow
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveAlert((a) => (a ? { ...a, permissionState: 'allowed' } : null));
+                          setTimeout(() => setActiveAlert(null), 700);
+                        }}
+                        className="px-3.5 py-0.5 rounded-full bg-white text-black hover:bg-white/90 text-[11px] font-semibold transition"
+                      >
+                        Always
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Smart Alarm Trigger Alert (Full-width notch alert with Snooze & Dismiss) ── */}
+              {activeAlert.type === 'alarm' && (
+                <div className="w-full flex items-center justify-between px-1">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-full bg-[#ff9f0a]/20 text-[#ff9f0a] flex items-center justify-center shrink-0 animate-bounce">
+                      <AlarmBellSvg size={16} />
+                    </div>
+                    <div className="flex flex-col min-w-0 pr-2">
+                      <span className="text-[12.5px] font-bold text-white truncate leading-tight">
+                        {activeAlert.alarmTitle || 'Smart Alarm'}
+                      </span>
+                      <span className="text-[10.5px] text-[#ffb340] font-medium leading-tight tabular-nums flex items-center gap-1.5 mt-0.5">
+                        <span>{activeAlert.alarmTime || timeStr}</span>
+                        <span className="text-white/40">•</span>
+                        <span>Waktunya telah tiba</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSnoozeAlarm(activeAlert.alarmId);
+                      }}
+                      className="px-3 py-1 rounded-full bg-white/12 hover:bg-white/20 text-white text-[11px] font-medium transition"
+                      title="Tunda 5 Menit"
+                    >
+                      Snooze (+5m)
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (activeAlert.alarmId?.startsWith('task-')) {
+                          const taskIdNum = parseInt(activeAlert.alarmId.replace('task-', ''), 10);
+                          setTasks((prev) =>
+                            prev.map((t) => (t.id === taskIdNum ? { ...t, done: true } : t))
+                          );
+                        }
+                        setActiveAlert(null);
+                      }}
+                      className="px-3 py-1 rounded-full bg-white text-black hover:bg-white/90 text-[11px] font-semibold transition"
+                      title={
+                        activeAlert.alarmId?.startsWith('task-')
+                          ? 'Tandai Task Selesai'
+                          : 'Matikan Alarm'
+                      }
+                    >
+                      {activeAlert.alarmId?.startsWith('task-') ? 'Done' : 'Dismiss'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* =========================================================
+              2. COMPACT NOTCH STATE ([Battery Ring] 10:54 — Cross-morphs smoothly with Expanded Island)
+             ========================================================= */}
+          {!activeAlert && (
+            <div
+              className={`absolute inset-x-0 top-0 h-[32px] flex items-center justify-between px-3.5 text-white transition-all duration-350 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                !isExpanded
+                  ? 'opacity-100 scale-100 blur-0 pointer-events-auto z-20'
+                  : 'opacity-0 scale-90 blur-[4px] pointer-events-none z-0'
+              }`}
+            >
+              <div className="flex items-center gap-1.5">
+                {renderBatteryRing(15, 2.2)}
+                {dndEnabled && (
+                  <span className="text-[#8e8eff]">
+                    <MoonFilledSvg size={11} />
+                  </span>
+                )}
+              </div>
+              <span className="text-[13px] font-bold tracking-tight text-white tabular-nums">
+                {timeStr}
+              </span>
+            </div>
+          )}
+
+          {/* =========================================================
+              3. REAL-TIME VOICE (gemini-3.8-live) & SEARCH-GROUNDED AI (gemini-3.8-flash)
+             ========================================================= */}
+          {!activeAlert && isExpanded && assistantOpen && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full h-full flex flex-col justify-between text-white animate-[ isleFadeIn_200ms_ease-out ]"
+            >
+              {/* STAGE 1: REAL-TIME ISLE ASSISTANT VOICE PILL (Minimalist, Zero AI Slop) */}
+              {assistantMode === 'voice-pill' ? (
+                <div
+                  onWheel={(e) => {
+                    if (e.deltaY < -5) setAssistantMode('conversation');
+                  }}
+                  className="w-full h-full flex items-center justify-between px-4 py-2 gap-3"
+                >
+                  <div
+                    onClick={() => startBrowserVoiceRecognition()}
+                    title={
+                      voiceListening
+                        ? 'Isle Assistant aktif · Klik untuk hentikan'
+                        : 'Klik untuk bicara dengan Isle Assistant'
+                    }
+                    className="relative shrink-0 cursor-pointer"
+                  >
+                    <BotCanvas
+                      size={36}
+                      shape={botShape}
+                      color={botColor}
+                      form={voiceListening ? 'listening' : assistantLoading ? 'thinking' : botForm}
+                      voiceLevel={voiceEnergy}
+                    />
+                  </div>
+
+                  <div className="flex-1 min-w-0 flex flex-col justify-center gap-0.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[12px] font-semibold text-white tracking-tight">
+                        Isle Assistant
+                      </span>
+                      <span className="text-[10px] text-white/45 font-medium">
+                        {voiceListening
+                          ? 'Mendengarkan...'
+                          : assistantLoading
+                          ? 'Memproses...'
+                          : 'Voice Mode'}
+                      </span>
+                    </div>
+
+                    {assistantLoading ? (
+                      <div className="mt-0.5">
+                        <GeminiThinkingIndicator label="Memproses..." />
+                      </div>
+                    ) : (
+                      <div
+                        onClick={() => setAssistantMode('conversation')}
+                        className="text-[11.5px] text-white/85 line-clamp-2 leading-relaxed cursor-pointer hover:text-white transition"
+                        title="Klik untuk membuka riwayat teks lengkap"
+                      >
+                        {agentTranscript && voiceListening
+                          ? `"${agentTranscript}"`
+                          : agentHeadline ||
+                            (voiceListening
+                              ? 'Silakan berbicara...'
+                              : 'Klik mic untuk mulai berbicara')}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col items-end justify-between h-full py-0.5 shrink-0 pl-1">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => {
+                          const nextLang = voiceLang === 'id-ID' ? 'en-US' : 'id-ID';
+                          setVoiceLang(nextLang);
+                          if (voiceListening) {
+                            setTimeout(() => startBrowserVoiceRecognition(true), 40);
+                          }
+                        }}
+                        className="px-1.5 py-0.5 rounded-full bg-white/[0.08] hover:bg-white/16 text-[9.5px] font-semibold text-white/70 hover:text-white transition"
+                        title="Ganti Bahasa (ID / EN)"
+                      >
+                        {voiceLang === 'id-ID' ? 'ID' : 'EN'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          stopVoiceRecognition();
+                          setDefaultAltQMode('conversation');
+                          setAssistantMode('conversation');
+                        }}
+                        className="px-2 py-0.5 rounded-full bg-white/[0.08] hover:bg-white/16 text-[9.5px] font-semibold text-white/70 hover:text-white transition"
+                        title="Beralih ke mode Teks (Type)"
+                      >
+                        Type
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => startBrowserVoiceRecognition()}
+                        title={voiceListening ? 'Hentikan Mendengarkan' : 'Mulai Bicara'}
+                        className={`w-6 h-6 rounded-full flex items-center justify-center transition ${
+                          voiceListening
+                            ? 'bg-[#ff453a] text-white shadow-sm shadow-rose-500/40'
+                            : 'bg-white/12 hover:bg-white/20 text-white/85'
+                        }`}
+                      >
+                        <MicSymbolicSvg size={11} />
+                      </button>
+                      <button
+                        onClick={closeAssistantAndCollapse}
+                        title="Tutup (Alt+Q atau Esc)"
+                        className="w-6 h-6 rounded-full bg-white/[0.08] hover:bg-white/16 flex items-center justify-center text-white/60 hover:text-white transition"
+                      >
+                        <CloseCrossSvg size={10} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* STAGE 2: SLEEK SINGLE-ANSWER AI VIEW + MULTIMODAL VISION (Upload, Drag-Drop, Paste & Auto-Screenshot) */
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const droppedFiles = Array.from(e.dataTransfer?.files || []) as File[];
+                    const imgFile = droppedFiles.find((f) => f.type.startsWith('image/'));
+                    if (imgFile) {
+                      attachImageFile(imgFile);
+                    }
+                  }}
+                  className="w-full h-full flex flex-col justify-between px-3.5 pt-2 pb-2"
+                >
+                  {/* Slim Minimalist Header */}
+                  <div className="flex items-center justify-between shrink-0 pb-1 border-b border-white/[0.06]">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-[11px] font-semibold text-white tracking-tight">
+                        Isle Assistant
+                      </span>
+                      {messages.filter((m) => m.role === 'assistant').length > 1 && (
+                        <button
+                          onClick={() => setShowAllChatHistory((prev) => !prev)}
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-medium transition ${
+                            showAllChatHistory
+                              ? 'bg-white/15 text-white'
+                              : 'text-white/40 hover:text-white/75'
+                          }`}
+                          title="Toggle history"
+                        >
+                          {showAllChatHistory ? 'Latest only' : 'History'}
+                        </button>
+                      )}
+                      {voiceListening && (
+                        <span className="text-[9.5px] text-[#30d158] font-medium animate-pulse truncate">
+                          · Listening
+                        </span>
+                      )}
+                      {spamNotice && (
+                        <span className="text-[9.5px] text-[#ff9f0a] font-medium truncate">
+                          · {spamNotice}
+                        </span>
+                      )}
+                      {newChatToast && (
+                        <span className="text-[9.5px] text-white/40">· Cleared</span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      <div className="flex items-center bg-white/[0.07] rounded-full p-0.5 text-[9px] mr-0.5">
+                        <button
+                          onClick={() => {
+                            setDefaultAltQMode('voice-pill');
+                            setAssistantMode('voice-pill');
+                            startBrowserVoiceRecognition(true);
+                          }}
+                          className="px-1.5 py-0.5 rounded-full text-white/60 hover:text-white"
+                          title="Switch to Voice Mode"
+                        >
+                          Voice
+                        </button>
+                        <button
+                          onClick={() => {
+                            stopVoiceRecognition();
+                            setDefaultAltQMode('conversation');
+                            setAssistantMode('conversation');
+                            assistantInputRef.current?.focus();
+                          }}
+                          className="px-1.5 py-0.5 rounded-full bg-white text-black font-semibold"
+                          title="Direct Typing Mode"
+                        >
+                          Type
+                        </button>
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          setMessages([]);
+                          setLatestSearchSources([]);
+                          setPendingImage(null);
+                          setShowAllChatHistory(false);
+                          setAnimatingMsgId(null);
+                          setNewChatToast(true);
+                          setTimeout(() => setNewChatToast(false), 2000);
+                          assistantInputRef.current?.focus();
+                        }}
+                        title="Clear response"
+                        className="w-5 h-5 rounded-full bg-white/[0.08] hover:bg-white/16 flex items-center justify-center text-white/70 hover:text-white transition"
+                      >
+                        <PlusSvg size={10} />
+                      </button>
+                      <button
+                        onClick={closeAssistantAndCollapse}
+                        title="Close (Alt+Q or Esc)"
+                        className="w-5 h-5 rounded-full bg-white/[0.08] hover:bg-white/16 flex items-center justify-center text-white/70 hover:text-white transition"
+                      >
+                        <CloseCrossSvg size={9} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Main Response Area */}
+                  <div
+                    ref={chatScrollRef}
+                    className="flex-1 overflow-y-auto no-scrollbar pr-0.5 my-1 flex flex-col justify-center"
+                  >
+                    {assistantLoading ? (
+                      <div className="flex items-center gap-2.5 py-1 pl-0.5 animate-[ isleFadeIn_180ms_ease-out ]">
+                        <div className="shrink-0">
+                          <BotCanvas
+                            size={18}
+                            shape={botShape}
+                            color={botColor}
+                            form="thinking"
+                            voiceLevel={voiceEnergy}
+                          />
+                        </div>
+                        <GeminiThinkingIndicator
+                          label={agentHeadline || 'Isle Assistant thinking...'}
+                        />
+                      </div>
+                    ) : showAllChatHistory ? (
+                      <div className="space-y-2 py-0.5">
+                        {messages
+                          .filter((m) => m.role === 'assistant')
+                          .map((m) => (
+                            <div key={m.id} className="flex items-start gap-2">
+                              <div className="shrink-0 mt-0.5">
+                                <BotCanvas
+                                  size={15}
+                                  shape={botShape}
+                                  color={botColor}
+                                  form="reply"
+                                  voiceLevel={0}
+                                />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                {m.imageUrl && (
+                                  <img
+                                    src={m.imageUrl}
+                                    alt="Analyzed attachment"
+                                    className="h-9 w-auto rounded border border-white/15 object-cover mb-1"
+                                  />
+                                )}
+                                <div className="text-[11.5px] text-white/90 leading-relaxed select-text break-words">
+                                  {m.text}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    ) : latestAssistantMessage ? (
+                      <div
+                        key={latestAssistantMessage.id}
+                        className="flex flex-col gap-1 animate-[ isleFadeIn_240ms_ease-out ]"
+                      >
+                        <div className="flex items-start gap-2">
+                          <div className="shrink-0 mt-0.5">
+                            <BotCanvas
+                              size={16}
+                              shape={botShape}
+                              color={botColor}
+                              form="reply"
+                              voiceLevel={0}
+                            />
+                          </div>
+                          {latestAssistantMessage.imageUrl && (
+                            <img
+                              src={latestAssistantMessage.imageUrl}
+                              alt="Visual context"
+                              className="w-9 h-9 rounded-md border border-white/20 object-cover shrink-0 mt-0.5"
+                              title="Gambar / Screenshot yang dianalisis AI"
+                            />
+                          )}
+                          <div className="text-[11.5px] text-white/92 leading-relaxed select-text break-words flex-1 min-w-0">
+                            {animatingMsgId === latestAssistantMessage.id
+                              ? latestAssistantMessage.text.slice(0, revealedChars)
+                              : latestAssistantMessage.text}
+                            {animatingMsgId === latestAssistantMessage.id && (
+                              <span className="inline-block w-1.5 h-3 ml-0.5 align-middle bg-white/70 animate-pulse rounded-xs" />
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Compact PC System Control / Terminal Card (Bluetooth, Wi-Fi, Terminal stdout) */}
+                        {latestAssistantMessage.commandCard &&
+                          animatingMsgId !== latestAssistantMessage.id && (
+                            <div className="pl-6 pt-0.5 animate-[ isleFadeIn_180ms_ease-out ]">
+                              <div
+                                onClick={() => {
+                                  const card = latestAssistantMessage.commandCard;
+                                  if (!card) return;
+                                  if (card.uri) {
+                                    window.location.href = card.uri;
+                                  } else if (card.command) {
+                                    navigator.clipboard?.writeText(card.command);
+                                  }
+                                }}
+                                title={
+                                  latestAssistantMessage.commandCard.uri
+                                    ? `Click to open Windows Settings (${latestAssistantMessage.commandCard.uri})`
+                                    : 'Click to copy command'
+                                }
+                                className="flex flex-col gap-0.5 px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] font-mono text-[10px] cursor-pointer transition"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="truncate text-white/75">
+                                    <span className="text-white/35 mr-1">$</span>
+                                    {latestAssistantMessage.commandCard.command}
+                                  </div>
+                                  <span className="flex items-center gap-1 text-[#30d158] font-sans font-semibold text-[9.5px] shrink-0">
+                                    <CheckTickSvg size={9} />
+                                    {latestAssistantMessage.commandCard.purpose}
+                                  </span>
+                                </div>
+                                {latestAssistantMessage.commandCard.output && (
+                                  <div className="text-[9.5px] text-white/50 truncate">
+                                    {latestAssistantMessage.commandCard.output}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                        {/* Compact Found Files Strip (when user asks AI to find files) */}
+                        {latestAssistantMessage.foundFiles &&
+                          latestAssistantMessage.foundFiles.length > 0 &&
+                          animatingMsgId !== latestAssistantMessage.id && (
+                            <div className="flex items-center gap-1.5 pl-6 pt-0.5 overflow-x-auto no-scrollbar animate-[ isleFadeIn_180ms_ease-out ]">
+                              {latestAssistantMessage.foundFiles.map((f, idx) => (
+                                <button
+                                  key={idx}
+                                  onClick={() => {
+                                    addFilesToShelf([
+                                      {
+                                        name: f.name,
+                                        size: f.size,
+                                        ext: detectFileExt(f.name),
+                                      },
+                                    ]);
+                                    closeAssistantAndCollapse();
+                                    setIsPinnedOpen(true);
+                                    navigateToPage(4, 'right');
+                                  }}
+                                  title={`${f.path} (${f.size}) · Click to send to Shelf`}
+                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/[0.06] hover:bg-white/14 border border-white/10 text-[9.5px] text-white/85 whitespace-nowrap transition shrink-0"
+                                >
+                                  <FileDocumentBadgeSvg ext={detectFileExt(f.name)} size={12} />
+                                  <span className="truncate max-w-[110px]">{f.name}</span>
+                                  <span className="text-white/40">{f.size}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                        {/* Ultra-Minimalist Subtle Source Citations (Zero AI slop, short domain badge) */}
+                        {latestAssistantMessage.searchSources &&
+                          latestAssistantMessage.searchSources.length > 0 &&
+                          animatingMsgId !== latestAssistantMessage.id && (
+                            <div className="flex items-center gap-1.5 pl-6 pt-0.5 text-[9px] text-white/35 animate-[ isleFadeIn_180ms_ease-out ]">
+                              <span className="text-white/20">•</span>
+                              <span>Sumber:</span>
+                              {latestAssistantMessage.searchSources.slice(0, 2).map((src, idx) => {
+                                let label = src.title;
+                                try {
+                                  label = new URL(src.uri).hostname.replace('www.', '');
+                                } catch {
+                                  label = src.title.slice(0, 16);
+                                }
+                                return (
+                                  <a
+                                    key={idx}
+                                    href={src.uri}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-white/45 hover:text-white/80 underline underline-offset-2 decoration-white/20 hover:decoration-white/60 transition"
+                                    title={src.title}
+                                  >
+                                    {label}
+                                  </a>
+                                );
+                              })}
+                            </div>
+                          )}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {/* Pending Image Attachment Preview Chip (Upload / Paste / Drag-Drop / Auto-Screenshot) */}
+                  {pendingImage && (
+                    <div className="flex items-center justify-between gap-2 px-2 py-1 mb-1 rounded-lg bg-white/[0.07] border border-white/15 shrink-0 animate-[ isleFadeIn_150ms_ease-out ]">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <img
+                          src={pendingImage.dataUrl}
+                          alt={pendingImage.name}
+                          className="w-6 h-6 rounded object-cover border border-white/20 shrink-0"
+                        />
+                        <span className="text-[10px] text-white/85 truncate font-medium">
+                          {pendingImage.name}
+                        </span>
+                        <span className="text-[9px] text-white/50 font-medium shrink-0">
+                          · Vision
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPendingImage(null)}
+                        className="w-4 h-4 rounded-full bg-white/10 hover:bg-white/25 flex items-center justify-center text-white/70 hover:text-white transition shrink-0"
+                        title="Hapus lampiran gambar"
+                      >
+                        <CloseCrossSvg size={8} />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Slim Bottom Auto-Focused Input Field Bar with Multimodal Image Upload + Paste Support */}
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      stopVoiceRecognition();
+                      handleAskGemini(assistantInput);
+                    }}
+                    className="flex items-center gap-1.5 pt-0.5 shrink-0"
+                  >
+                    <div
+                      onClick={() => startBrowserVoiceRecognition()}
+                      title={
+                        voiceListening
+                          ? 'Listening · Click to stop'
+                          : 'Click to speak'
+                      }
+                      className="shrink-0 cursor-pointer"
+                    >
+                      <BotCanvas
+                        size={24}
+                        shape={botShape}
+                        color={botColor}
+                        form={voiceListening ? 'listening' : assistantLoading ? 'thinking' : botForm}
+                        voiceLevel={voiceEnergy}
+                      />
+                    </div>
+
+                    {/* Hidden File Input for Multimodal Vision Image Upload */}
+                    <input
+                      ref={imageInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) attachImageFile(f);
+                        e.target.value = '';
+                      }}
+                      className="hidden"
+                    />
+
+                    <div className="flex-1 flex items-center bg-[#18181d] border border-white/12 focus-within:border-white/30 rounded-full pl-2 pr-1 py-0.5 transition gap-1">
+                      {/* Image Upload / Vision Attachment Button */}
+                      <button
+                        type="button"
+                        onClick={() => imageInputRef.current?.click()}
+                        title="Upload gambar (atau Paste Ctrl+V / Drag & Drop / ketik 'ambil screenshot')"
+                        className={`w-5 h-5 rounded-full flex items-center justify-center transition shrink-0 ${
+                          pendingImage
+                            ? 'bg-white text-black'
+                            : 'text-white/50 hover:text-white hover:bg-white/10'
+                        }`}
+                      >
+                        <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                          <circle cx="8.5" cy="8.5" r="1.5" />
+                          <polyline points="21 15 16 10 5 21" />
+                        </svg>
+                      </button>
+
+                      <input
+                        ref={assistantInputRef}
+                        type="text"
+                        autoFocus
+                        maxLength={1000}
+                        value={assistantInput}
+                        onChange={(e) => {
+                          setAssistantInput(e.target.value);
+                          setBotForm(e.target.value ? 'typing' : 'listening');
+                        }}
+                        onPaste={(e) => {
+                          const items = Array.from(e.clipboardData?.items || []) as DataTransferItem[];
+                          const imgItem = items.find((item) => item.type.startsWith('image/'));
+                          if (imgItem) {
+                            const file = imgItem.getAsFile();
+                            if (file) {
+                              e.preventDefault();
+                              attachImageFile(file);
+                            }
+                          }
+                        }}
+                        placeholder={
+                          voiceListening
+                            ? 'Listening...'
+                            : pendingImage
+                            ? 'Tanyakan sesuatu tentang gambar ini...'
+                            : 'Type here, paste image, or "ambil screenshot"'
+                        }
+                        className="flex-1 bg-transparent text-[11.5px] text-white placeholder-white/35 focus:outline-none min-w-0"
+                      />
+                      {assistantLoading ? (
+                        <button
+                          type="button"
+                          onClick={cancelInFlightGemini}
+                          title="Stop response"
+                          className="w-5 h-5 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition shrink-0"
+                        >
+                          <StopSquareSvg size={8} />
+                        </button>
+                      ) : assistantInput.trim() || pendingImage ? (
+                        <button
+                          type="submit"
+                          className="w-5 h-5 rounded-full bg-white text-black hover:bg-white/90 flex items-center justify-center transition shrink-0"
+                        >
+                          <SendArrowSvg size={11} />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => startBrowserVoiceRecognition()}
+                          title={voiceListening ? 'Stop voice' : 'Start voice'}
+                          className={`w-5 h-5 rounded-full flex items-center justify-center transition shrink-0 ${
+                            voiceListening
+                              ? 'bg-[#ff453a] text-white animate-pulse'
+                              : 'bg-white/12 hover:bg-white/20 text-white/85'
+                          }`}
+                        >
+                          <MicSymbolicSvg size={11} />
+                        </button>
+                      )}
+                    </div>
+                  </form>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* =========================================================
+              4. EXPANDED ISLAND (6 Pages + Simultaneous Dual-Layer Slide + Seamless Cross-Morph)
+             ========================================================= */}
+          {!activeAlert && !assistantOpen && (
+            <div
+              onWheel={(e) => {
+                if (isExpanded && Math.abs(e.deltaX) > 18 && !prevPageIndex) {
+                  if (e.deltaX > 0) navigateToPage(pageIndex + 1, 'right');
+                  else navigateToPage(pageIndex - 1, 'left');
+                }
+              }}
+              className={`relative w-full h-full flex flex-col justify-between text-white origin-top transition-all duration-350 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                isExpanded
+                  ? 'opacity-100 scale-100 translate-y-0 blur-0 pointer-events-auto'
+                  : 'opacity-0 scale-[0.84] -translate-y-3 blur-[6px] pointer-events-none'
+              }`}
+            >
+              {/* ── Top Header Row on Non-Music Pages (Clean Minimalist Title + Battery & Clock in Corner) ── */}
+              {activePage !== 'music' && (
+                <div className="w-full flex items-center justify-between px-6 pt-2.5 pb-1 z-20 shrink-0 animate-[ isleFadeIn_200ms_ease-out ]">
+                  {/* Clean Page Title + Shelf "Clear" Action */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12.5px] font-bold text-white tracking-tight">
+                      {ISLAND_PAGES.find((p) => p.id === activePage)?.label || activePage}
+                    </span>
+                    {activePage === 'shelf' && shelfFiles.length > 0 && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShelfFiles([]);
+                        }}
+                        className="px-2.5 py-0.5 rounded-full bg-white/12 hover:bg-white/22 text-[10px] font-semibold text-white/90 transition animate-[ isleFadeIn_160ms_ease-out ]"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Right: Equalizer + Isle Assistant + Battery Ring + Date + Time + Settings */}
+                  <div className="flex items-center gap-2.5 text-white/85">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsPlaying((p) => !p);
+                      }}
+                      title={isPlaying ? 'Pause music' : 'Play music'}
+                      className="text-white/80 hover:text-white transition"
+                    >
+                      <EqualizerBarsSvg size={14} playing={isPlaying} />
+                    </button>
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowAllChatHistory(false);
+                        setAssistantOpen(true);
+                        setAssistantMode(defaultAltQMode);
+                        if (defaultAltQMode === 'voice-pill') {
+                          setTimeout(() => startBrowserVoiceRecognition(true), 30);
+                        } else {
+                          setTimeout(() => assistantInputRef.current?.focus(), 40);
+                        }
+                      }}
+                      title="Open Isle Assistant (Alt+Q)"
+                      className="text-white/75 hover:text-white transition"
+                    >
+                      <SparkleFourPointSvg size={14} />
+                    </button>
+
+                    <div className="flex items-center gap-1.5 text-[11.5px] tracking-tight whitespace-nowrap">
+                      {renderBatteryRing(14, 2)}
+                      <span className="text-white/75 font-medium">{headerDateStr}</span>
+                      <span className="text-white font-bold tabular-nums">{timeStr}</span>
+                    </div>
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSettingsOpen((s) => !s);
+                      }}
+                      title="Settings"
+                      className={`transition ${
+                        settingsOpen ? 'text-white' : 'text-white/65 hover:text-white'
+                      }`}
+                    >
+                      <GearSettingsSvg size={14} />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Side Left / Right Carousel Chevron Buttons (.nav-btn — Smoothly fades & scales in Lyrics/Settings mode) ── */}
+              <button
+                onClick={goPrevPage}
+                className={`absolute left-[10px] top-[48%] -translate-y-1/2 z-30 w-[21px] h-[21px] rounded-full bg-[#3a3a3c] hover:bg-[#48484a] flex items-center justify-center cursor-pointer transition-all duration-350 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-90 ${
+                  (activePage === 'music' && lyricsMode) || settingsOpen
+                    ? 'opacity-0 scale-75 -translate-x-2 blur-[2px] pointer-events-none'
+                    : 'opacity-100 scale-100 translate-x-0 blur-0 pointer-events-auto'
+                }`}
+                title="Previous Slide"
+                aria-label="Previous Slide"
+              >
+                <svg
+                  width={12}
+                  height={12}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#dcdce0"
+                  strokeWidth={2.4}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+              </button>
+              <button
+                onClick={goNextPage}
+                className={`absolute right-[10px] top-[48%] -translate-y-1/2 z-30 w-[21px] h-[21px] rounded-full bg-[#3a3a3c] hover:bg-[#48484a] flex items-center justify-center cursor-pointer transition-all duration-350 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-90 ${
+                  (activePage === 'music' && lyricsMode) || settingsOpen
+                    ? 'opacity-0 scale-75 translate-x-2 blur-[2px] pointer-events-none'
+                    : 'opacity-100 scale-100 translate-x-0 blur-0 pointer-events-auto'
+                }`}
+                title="Next Slide"
+                aria-label="Next Slide"
+              >
+                <svg
+                  width={12}
+                  height={12}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#dcdce0"
+                  strokeWidth={2.4}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+              </button>
+
+              {/* ── Quick Settings Overlay (Alt+Q Mode Selector + Optional FLAC Lossless Toggle + System Battery) ── */}
+              {settingsOpen ? (
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex-1 flex flex-col justify-between px-8 py-1.5 animate-[ isleFadeIn_180ms_ease-out ]"
+                >
+                  <div className="flex items-center justify-between bg-white/[0.05] rounded-xl px-3 py-1.5">
+                    <div className="flex flex-col">
+                      <span className="text-[11px] font-bold text-white">
+                        Alt + Q Shortcut Default Mode
+                      </span>
+                      <span className="text-[9.5px] text-white/45">
+                        Auto-Focus Typing locks keyboard focus away from games
+                      </span>
+                    </div>
+                    <div className="flex items-center bg-black/50 border border-white/10 rounded-full p-0.5 text-[10px]">
+                      <button
+                        onClick={() => setDefaultAltQMode('conversation')}
+                        className={`px-2.5 py-0.5 rounded-full font-semibold transition ${
+                          defaultAltQMode === 'conversation'
+                            ? 'bg-white text-black'
+                            : 'text-white/65 hover:text-white'
+                        }`}
+                      >
+                        Type
+                      </button>
+                      <button
+                        onClick={() => setDefaultAltQMode('voice-pill')}
+                        className={`px-2.5 py-0.5 rounded-full font-semibold transition ${
+                          defaultAltQMode === 'voice-pill'
+                            ? 'bg-white text-black'
+                            : 'text-white/65 hover:text-white'
+                        }`}
+                      >
+                        Voice
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Optional FLAC (Lossless Audio) Toggle + Smart Mood Shuffle Toggle */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div
+                      onClick={() => {
+                        const nextFlac = !flacEnabled;
+                        setFlacEnabled(nextFlac);
+                        setActiveTrack((prev) => (prev ? { ...prev, isFlac: nextFlac } : prev));
+                      }}
+                      className="flex-1 flex items-center justify-between bg-white/[0.05] hover:bg-white/[0.08] rounded-xl px-2.5 py-1.5 cursor-pointer transition"
+                    >
+                      <div className="flex flex-col">
+                        <div className="flex items-center gap-1">
+                          <span className="font-bold text-white text-[10.5px]">FLAC Lossless</span>
+                          <span className="px-1 py-0.2 rounded bg-amber-400/20 text-[#ffd60a] text-[7.5px] font-bold">
+                            HI-RES
+                          </span>
+                        </div>
+                        <span className="text-[9px] text-white/45">Lossless Audio</span>
+                      </div>
+                      <div
+                        className={`w-7 h-4 rounded-full p-0.5 transition shrink-0 ${
+                          flacEnabled ? 'bg-[#30d158]' : 'bg-white/20'
+                        }`}
+                      >
+                        <div
+                          className={`w-3 h-3 rounded-full bg-white transition-transform ${
+                            flacEnabled ? 'translate-x-3' : 'translate-x-0'
+                          }`}
+                        />
+                      </div>
+                    </div>
+
+                    <div
+                      onClick={() => setMoodShuffleEnabled((prev) => !prev)}
+                      className="flex-1 flex items-center justify-between bg-white/[0.05] hover:bg-white/[0.08] rounded-xl px-2.5 py-1.5 cursor-pointer transition"
+                    >
+                      <div className="flex flex-col">
+                        <div className="flex items-center gap-1">
+                          <span className="font-bold text-white text-[10.5px]">Mood Shuffle</span>
+                          <span className="px-1 py-0.2 rounded bg-emerald-400/20 text-[#30d158] text-[7.5px] font-bold">
+                            AUTO
+                          </span>
+                        </div>
+                        <span className="text-[9px] text-white/45">Auto-Mix Sesuai Mood</span>
+                      </div>
+                      <div
+                        className={`w-7 h-4 rounded-full p-0.5 transition shrink-0 ${
+                          moodShuffleEnabled ? 'bg-[#30d158]' : 'bg-white/20'
+                        }`}
+                      >
+                        <div
+                          className={`w-3 h-3 rounded-full bg-white transition-transform ${
+                            moodShuffleEnabled ? 'translate-x-3' : 'translate-x-0'
+                          }`}
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => setSettingsOpen(false)}
+                      className="px-3 py-2 rounded-xl bg-white text-black hover:bg-white/90 text-[10.5px] font-bold shrink-0 transition"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* ── Dual-Layer Simultaneous Carousel Viewport (Outgoing + Incoming Pages Slide Together with Motion Blur) ── */
+                <div className="relative flex-1 overflow-hidden">
+                  {/* Outgoing Page Layer (Animates out over 360ms when switching pages) */}
+                  {prevPageIndex !== null && prevPageIndex !== pageIndex && (
+                    <div
+                      key={`out-${prevPageIndex}-${slideTick}`}
+                      style={{
+                        animation:
+                          slideDir === 'right'
+                            ? 'islePageOutLeft 360ms cubic-bezier(0.22, 1, 0.36, 1) forwards'
+                            : 'islePageOutRight 360ms cubic-bezier(0.22, 1, 0.36, 1) forwards',
+                      }}
+                      className="absolute inset-0 flex flex-col justify-center pointer-events-none"
+                    >
+                      {renderPageContent(ISLAND_PAGES[prevPageIndex].id)}
+                    </div>
+                  )}
+
+                  {/* Incoming / Active Page Layer (Unified key without lyricsMode so Music <-> Lyrics morphs in place!) */}
+                  <div
+                    key={`in-${pageIndex}-${slideTick}`}
+                    style={
+                      prevPageIndex !== null
+                        ? {
+                            animation:
+                              slideDir === 'right'
+                                ? 'islePageInRight 360ms cubic-bezier(0.22, 1, 0.36, 1) forwards'
+                                : 'islePageInLeft 360ms cubic-bezier(0.22, 1, 0.36, 1) forwards',
+                          }
+                        : undefined
+                    }
+                    className="relative w-full h-full flex flex-col justify-center"
+                  >
+                    {renderPageContent(activePage)}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Bottom Page Indicator Dots (Rendered inline inside Music Player on Music tab) ── */}
+              {activePage !== 'music' && !settingsOpen && (
+                <div
+                  className="w-full flex items-center justify-center gap-[5px] pb-[10px] z-20 shrink-0"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {ISLAND_PAGES.map((p, idx) => {
+                    const isActive = idx === pageIndex;
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={(e) => selectTabPage(idx, e)}
+                        className={`h-[4px] transition-all duration-300 ${
+                          isActive
+                            ? 'w-[17px] bg-white rounded-[3px]'
+                            : 'w-[4px] bg-[#555558] rounded-full hover:bg-white/60'
+                        }`}
+                        title={p.label}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </IslandSurface>
+      </div>
+
+      {/* Hidden Real HTML5 Audio Player (Supports Both Local MP3/WAV Files & Direct FLAC/HTTP Audio Streams) */}
+      <audio
+        ref={audioElRef}
+        onTimeUpdate={(e) => {
+          if (!activeTrack?.audioUrl) return;
+          const el = e.currentTarget;
+          setPositionMs(Math.floor(el.currentTime * 1000));
+        }}
+        onLoadedMetadata={(e) => {
+          if (!activeTrack?.audioUrl) return;
+          const el = e.currentTarget;
+          if (Number.isFinite(el.duration) && el.duration > 0) {
+            const durMs = Math.floor(el.duration * 1000);
+            setActiveTrack((prev) => (prev ? { ...prev, durationMs: durMs } : prev));
+          }
+        }}
+        onEnded={() => {
+          if (!activeTrack?.audioUrl || activeTrack?.sourceType === 'external') return;
+          if (Date.now() - lastPlayedSongTimeRef.current < 5000) return;
+          handleTrackEndedRef.current();
+        }}
+        className="hidden"
+      />
+      {/* Offscreen YouTube Iframe Audio Player (Only rendered for Internal AI Player tracks, never for External OS Media) */}
+      {activeTrack?.youtubeVideoId && activeTrack?.sourceType !== 'external' && (
+        <iframe
+          ref={ytIframeRef}
+          key={activeTrack.youtubeVideoId}
+          src={`https://www.youtube.com/embed/${activeTrack.youtubeVideoId}?enablejsapi=1&autoplay=1&playsinline=1&origin=${encodeURIComponent(typeof window !== 'undefined' ? window.location.origin : '')}`}
+          className="fixed -top-[9999px] -left-[9999px] w-[2px] h-[2px] opacity-0 pointer-events-none"
+          allow="autoplay; encrypted-media"
+          title="YouTube Full Audio Stream"
+          onLoad={(e) => {
+            try {
+              const cw = e.currentTarget.contentWindow;
+              if (cw) {
+                cw.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), '*');
+                cw.postMessage(
+                  JSON.stringify({
+                    event: 'command',
+                    func: 'addEventListener',
+                    args: ['onStateChange'],
+                  }),
+                  '*'
+                );
+                cw.postMessage(
+                  JSON.stringify({ event: 'command', func: 'playVideo', args: '' }),
+                  '*'
+                );
+                cw.postMessage(
+                  JSON.stringify({ event: 'command', func: muted ? 'mute' : 'unMute', args: '' }),
+                  '*'
+                );
+                cw.postMessage(
+                  JSON.stringify({
+                    event: 'command',
+                    func: 'setVolume',
+                    args: [muted ? 0 : volume],
+                  }),
+                  '*'
+                );
+              }
+            } catch {
+              // ignore
+            }
+          }}
+        />
       )}
+      <input
+        ref={audioFileInputRef}
+        type="file"
+        accept="audio/*"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) handleLocalAudioFile(f);
+          e.target.value = '';
+        }}
+        className="hidden"
+      />
     </div>
   );
 }

@@ -1,29 +1,80 @@
 {
   "name": "isle",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "A notch-style island for the GNOME desktop: music with synced lyrics, calls, focus timer, reminders, shelf, calendar, alerts, and voice assistant.",
+  "main": "electron/main.cjs",
+  "description": "Standalone frameless Dynamic Island overlay for Windows with synced lyrics, calls, focus timer, reminders, shelf, calendar, alerts, and voice assistant.",
+  "author": "Isle Desktop",
   "license": "GPL-3.0-or-later",
   "scripts": {
-    "dev": "vite --host 0.0.0.0 --port 3000",
+    "dev": "tsx server.ts",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 3000",
+    "build:server": "node scripts/build-server.mjs",
+    "electron:dev": "npm run build:server && electron .",
+    "build:exe": "npm run build && npm run build:server && electron-builder --win nsis --x64",
+    "dist": "npm run build && npm run build:server && electron-builder --win nsis --x64",
+    "start": "node server.ts",
     "lint": "tsc --noEmit"
+  },
+  "build": {
+    "appId": "com.isle.dynamicisland",
+    "productName": "Isle Dynamic Island",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-server/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Isle Dynamic Island",
+      "runAfterFinish": true,
+      "include": "electron/installer.nsh",
+      "artifactName": "Setup.${ext}"
+    }
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/express": "^5.0.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^35.1.2",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.0",
     "eslint": "10.12.0",
     "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.5"
   },
   "dependencies": {
+    "@google/genai": "^2.31.0",
+    "@types/ws": "^8.18.2",
+    "express": "^5.3.0",
     "lucide-react": "^1.61.0",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "ws": "^8.22.0"
   }
 }

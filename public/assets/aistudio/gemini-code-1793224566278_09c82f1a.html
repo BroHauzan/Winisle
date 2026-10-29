@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Music Player UI</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: #2b2427;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    /* Container Utama */
+    .music-widget {
+      position: relative;
+      width: 440px;
+      background-color: #000000;
+      border-radius: 0 0 34px 34px;
+      padding: 12px 42px 10px 42px;
+      color: #ffffff;
+      user-select: none;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+    }
+
+    /* Baris Status Atas (Baterai & Waktu) */
+    .top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      font-size: 13px;
+      margin-bottom: 2px;
+      padding-left: 30px;
+    }
+
+    .battery-icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 2.5px solid #1ed760;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .battery-icon svg {
+      width: 10px;
+      height: 10px;
+      fill: #ffffff;
+    }
+
+    .date-text {
+      color: #d1d1d6;
+      font-weight: 500;
+    }
+
+    .time-text {
+      color: #ffffff;
+      font-weight: 700;
+    }
+
+    /* Info Media (Album Art & Judul) */
+    .media-info {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      margin-top: -10px;
+      margin-bottom: 12px;
+    }
+
+    .album-art {
+      width: 66px;
+      height: 66px;
+      background-color: #1c1c1e;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .album-art svg {
+      width: 32px;
+      height: 32px;
+      fill: #555558;
+    }
+
+    .media-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: -0.2px;
+      margin-top: 8px;
+    }
+
+    /* Tombol Panah Kiri & Kanan */
+    .nav-btn {
+      position: absolute;
+      top: 48%;
+      transform: translateY(-50%);
+      width: 21px;
+      height: 21px;
+      background-color: #3a3a3c;
+      border-radius: 50%;
+      border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    .nav-btn.left {
+      left: 10px;
+    }
+
+    .nav-btn.right {
+      right: 10px;
+    }
+
+    .nav-btn svg {
+      width: 12px;
+      height: 12px;
+      stroke: #dcdce0;
+      stroke-width: 2.4;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    /* Baris Progress Bar */
+    .progress-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .time-label {
+      font-size: 14px;
+      font-weight: 500;
+      color: #555558;
+      letter-spacing: -0.3px;
+    }
+
+    .progress-track {
+      flex: 1;
+      height: 5px;
+      background-color: #242426;
+      border-radius: 3px;
+    }
+
+    /* Baris Kontrol Pemutar Musik */
+    .controls-row {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 26px;
+      margin-bottom: 8px;
+    }
+
+    .lyrics-btn {
+      position: absolute;
+      left: 24px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .lyrics-btn svg {
+      width: 20px;
+      height: 20px;
+      fill: #555558;
+    }
+
+    .playback-controls {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+    }
+
+    .ctrl-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .ctrl-btn svg {
+      fill: #555558;
+    }
+
+    .ctrl-btn.seek svg {
+      width: 22px;
+      height: 22px;
+    }
+
+    .ctrl-btn.play svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    /* Indikator Halaman (Titik Bawah) */
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+    }
+
+    .dot {
+      width: 4px;
+      height: 4px;
+      background-color: #555558;
+      border-radius: 50%;
+    }
+
+    .dot.active {
+      width: 17px;
+      background-color: #ffffff;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="music-widget">
+    <!-- Tombol Navigasi Samping -->
+    <button class="nav-btn left" aria-label="Previous Slide">
+      <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
+    </button>
+    <button class="nav-btn right" aria-label="Next Slide">
+      <svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>
+    </button>
+
+    <!-- Header Waktu & Baterai -->
+    <div class="top-bar">
+      <div class="battery-icon">
+        <svg viewBox="0 0 24 24">
+          <path d="M13 2L4 14h7l-2 8 9-12h-7l2-8z"/>
+        </svg>
+      </div>
+      <span class="date-text">Thu 29 Oct 2026</span>
+      <span class="time-text">04:54</span>
+    </div>
+
+    <!-- Album Art & Teks -->
+    <div class="media-info">
+      <div class="album-art">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" display="none"/>
+          <path d="M20 3L9 5v10.55c-.59-.34-1.27-.55-2-.55-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V9.82l8-1.6v5.33c-.59-.34-1.27-.55-2-.55-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V3z"/>
+        </svg>
+      </div>
+      <div class="media-title">Tidak ada media</div>
+    </div>
+
+    <!-- Progress Bar -->
+    <div class="progress-row">
+      <span class="time-label">00:00</span>
+      <div class="progress-track"></div>
+      <span class="time-label">-00:00</span>
+    </div>
+
+    <!-- Tombol Kontrol -->
+    <div class="controls-row">
+      <button class="lyrics-btn" aria-label="Lyrics">
+        <svg viewBox="0 0 24 24">
+          <path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h3v4l4-4h9c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14h-9.83L8 18.17V16H4V4h16v12z"/>
+          <path d="M9.5 8.5h2v2.5L10.3 13H8.8l1.1-2H9.5V8.5zm4 0h2v2.5L14.3 13h-1.5l1.1-2h-.4V8.5z"/>
+        </svg>
+      </button>
+
+      <div class="playback-controls">
+        <button class="ctrl-btn seek" aria-label="Rewind">
+          <svg viewBox="0 0 24 24">
+            <path d="M11.5 12l8.5 6V6l-8.5 6zm-9 0l8.5 6V6l-8.5 6z"/>
+          </svg>
+        </button>
+        <button class="ctrl-btn play" aria-label="Play">
+          <svg viewBox="0 0 24 24">
+            <path d="M6 4l15 8-15 8V4z"/>
+          </svg>
+        </button>
+        <button class="ctrl-btn seek" aria-label="Fast Forward">
+          <svg viewBox="0 0 24 24">
+            <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Indikator Slide -->
+    <div class="pagination">
+      <span class="dot active"></span>
+      <span class="dot"></span>
+      <span class="dot"></span>
+      <span class="dot"></span>
+      <span class="dot"></span>
+    </div>
+  </div>
+
+</body>
+</html>
