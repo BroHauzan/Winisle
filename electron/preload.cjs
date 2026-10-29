@@ -10,6 +10,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setIgnoreMouseEvents: (ignore, options) => {
     ipcRenderer.send('set-ignore-mouse-events', Boolean(ignore), options || { forward: true });
   },
+  getServerUrl: () => {
+    try {
+      return ipcRenderer.sendSync('get-server-url') || 'http://127.0.0.1:45781';
+    } catch {
+      return 'http://127.0.0.1:45781';
+    }
+  },
   /**
    * Subscribe to global Alt+Q / Alt+I shortcut events dispatched from the Electron main process.
    */

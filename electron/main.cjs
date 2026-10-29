@@ -13,8 +13,8 @@ process.on('unhandledRejection', (reason) => {
   console.error('[WinIsle Main Process] Unhandled Rejection:', reason);
 });
 
-const PORT = Number(process.env.PORT) || 3000;
-const SERVER_URL = `http://127.0.0.1:${PORT}`;
+let PORT = Number(process.env.PORT) || 45781;
+let SERVER_URL = `http://127.0.0.1:${PORT}`;
 
 // Window dimensions large enough to fit the largest expanded Dynamic Island state (Lyrics mode 650px + shoulders)
 // while keeping the rest of the window 100% transparent and click-through.
@@ -44,13 +44,28 @@ app.commandLine.appendSwitch('disable-sync');
 app.commandLine.appendSwitch('disable-features', 'Translate,CalculateNativeWinOcclusion,AutofillServerCommunication');
 
 /**
- * Check if local server on PORT is already responding
+ * Check if WinIsle local server on targetPort is responding with valid identity handshake
  */
-function isServerAlive() {
+function isServerAlive(targetPort = PORT) {
   return new Promise((resolve) => {
-    const req = http.get(`${SERVER_URL}/api/system/hardware`, { timeout: 900 }, (res) => {
-      res.resume();
-      resolve(true);
+    const req = http.get(`http://127.0.0.1:${targetPort}/api/winisle-health`, { timeout: 1000 }, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        return resolve(false);
+      }
+      let raw = '';
+      res.on('data', (c) => { raw += c; });
+      res.on('end', () => {
+        try {
+          const data = JSON.parse(raw);
+          if (data?.app === 'winisle-desktop') {
+            return resolve(true);
+          }
+        } catch {
+          // ignore
+        }
+        resolve(false);
+      });
     });
     req.on('error', () => resolve(false));
     req.on('timeout', () => {
@@ -61,12 +76,37 @@ function isServerAlive() {
 }
 
 /**
- * Wait until the local backend server is ready before showing the overlay
+ * Locate unpacked or standard dist directory
  */
-async function waitForServerReady(maxWaitMs = 12000) {
+function getUnpackedDistDir() {
+  const candidateDistDirs = [
+    process.env.ISLE_DIST_DIR,
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'dist'),
+    path.join(app.getAppPath(), '..', 'app.asar.unpacked', 'dist'),
+    path.join(__dirname, '..', 'dist'),
+    path.join(app.getAppPath(), 'dist'),
+    path.join(process.resourcesPath || '', 'dist'),
+    path.join(process.resourcesPath || '', 'app.asar', 'dist'),
+  ].filter(Boolean);
+
+  return (
+    candidateDistDirs.find((d) => {
+      try {
+        return fs.existsSync(path.join(d, 'index.html'));
+      } catch {
+        return false;
+      }
+    }) || path.join(app.getAppPath(), 'dist')
+  );
+}
+
+/**
+ * Wait until the local backend server is verified ready before showing the overlay
+ */
+async function waitForServerReady(targetPort = PORT, maxWaitMs = 10000) {
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
-    if (await isServerAlive()) return true;
+    if (await isServerAlive(targetPort)) return true;
     await new Promise((r) => setTimeout(r, 200));
   }
   return false;
@@ -76,12 +116,14 @@ async function waitForServerReady(maxWaitMs = 12000) {
  * Automatically start the local backend (server.ts / dist-server/server.cjs) inside the Electron lifecycle
  */
 async function ensureLocalBackendRunning() {
-  if (await isServerAlive()) {
+  if (await isServerAlive(PORT)) {
+    SERVER_URL = `http://127.0.0.1:${PORT}`;
     return;
   }
 
-  // 1. Locate bundled Server across possible packaged / dev paths
+  // 1. Locate bundled Server across unpacked & packaged paths
   const candidateServerPaths = [
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'dist-server', 'server.cjs'),
     path.join(__dirname, '..', 'dist-server', 'server.cjs'),
     path.join(app.getAppPath(), 'dist-server', 'server.cjs'),
     path.join(process.resourcesPath || '', 'app.asar', 'dist-server', 'server.cjs'),
@@ -96,20 +138,7 @@ async function ensureLocalBackendRunning() {
     }
   });
 
-  const candidateDistDirs = [
-    path.join(__dirname, '..', 'dist'),
-    path.join(app.getAppPath(), 'dist'),
-    path.join(process.resourcesPath || '', 'app.asar', 'dist'),
-    path.join(process.resourcesPath || '', 'dist'),
-  ];
-
-  const distDir = candidateDistDirs.find((d) => {
-    try {
-      return fs.existsSync(path.join(d, 'index.html'));
-    } catch {
-      return false;
-    }
-  }) || path.join(app.getAppPath(), 'dist');
+  const distDir = getUnpackedDistDir();
 
   process.env.PORT = String(PORT);
   process.env.ISLE_MANUAL_START = '1';
@@ -123,8 +152,11 @@ async function ensureLocalBackendRunning() {
       const serverMod = require(bundledServerPath);
       if (typeof serverMod.startServer === 'function') {
         embeddedServerInstance = await serverMod.startServer(PORT);
-        const ready = await waitForServerReady(8000);
-        if (ready) return;
+        const ready = await waitForServerReady(PORT, 8000);
+        if (ready) {
+          SERVER_URL = `http://127.0.0.1:${PORT}`;
+          return;
+        }
       }
     } catch (err) {
       console.error('Failed to start bundled server in-process:', err);
@@ -160,7 +192,8 @@ async function ensureLocalBackendRunning() {
           console.warn('Dev server process spawn error (safely handled):', spawnErr?.message);
         });
 
-        await waitForServerReady(10000);
+        await waitForServerReady(PORT, 10000);
+        SERVER_URL = `http://127.0.0.1:${PORT}`;
       }
     } catch (spawnErr) {
       console.warn('Spawn fallback skipped or failed:', spawnErr?.message);
@@ -353,15 +386,43 @@ function createOverlayWindow() {
   // Enable click-through on transparent areas by default while forwarding mousemove events
   mainWindow.setIgnoreMouseEvents(true, { forward: true });
 
-  // Safe loadURL with automatic retry
-  mainWindow.loadURL(SERVER_URL).catch((err) => {
-    console.warn('[WinIsle] Initial loadURL failed, retrying in 1s...', err?.message);
-    setTimeout(() => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
+  const distDir = getUnpackedDistDir();
+  const indexPath = path.join(distDir, 'index.html');
+
+  const injectServerUrl = () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents
+        .executeJavaScript(`window.__WINISLE_SERVER_URL__ = ${JSON.stringify(SERVER_URL)};`)
+        .catch(() => {});
+    }
+  };
+
+  mainWindow.webContents.on('did-finish-load', injectServerUrl);
+  mainWindow.webContents.on('dom-ready', injectServerUrl);
+
+  // Dual-mode Loading:
+  // Primary: Native file loading (100% immune to HTTP 404 "Cannot GET /" and instant zero-latency load)
+  // Fallback: Local HTTP server URL (http://127.0.0.1:45781)
+  if (fs.existsSync(indexPath)) {
+    mainWindow
+      .loadFile(indexPath)
+      .then(() => {
+        injectServerUrl();
+      })
+      .catch((err) => {
+        console.warn('[WinIsle] Direct loadFile failed, falling back to loadURL...', err?.message);
         mainWindow.loadURL(SERVER_URL).catch((e) => console.error('[WinIsle] Secondary loadURL error:', e));
-      }
-    }, 1200);
-  });
+      });
+  } else {
+    mainWindow.loadURL(SERVER_URL).catch((err) => {
+      console.warn('[WinIsle] Initial loadURL failed, retrying in 1s...', err?.message);
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.loadURL(SERVER_URL).catch((e) => console.error('[WinIsle] Secondary loadURL error:', e));
+        }
+      }, 1200);
+    });
+  }
 
   // Re-center if monitor resolution or display scaling changes
   const handleDisplayChange = () => positionWindowTopCenter(mainWindow);
@@ -373,6 +434,11 @@ function createOverlayWindow() {
     mainWindow = null;
   });
 }
+
+// IPC handler for local server URL resolution
+ipcMain.on('get-server-url', (event) => {
+  event.returnValue = SERVER_URL;
+});
 
 // IPC handler for dynamic click-through toggling from renderer
 ipcMain.on('set-ignore-mouse-events', (event, ignore, options) => {

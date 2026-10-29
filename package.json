@@ -29,6 +29,11 @@
       "electron/**/*",
       "package.json"
     ],
+    "asarUnpack": [
+      "dist/**/*",
+      "dist-server/**/*",
+      "electron/**/*"
+    ],
     "compression": "maximum",
     "win": {
       "target": [
@@ -49,6 +54,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "WinIsle",
       "runAfterFinish": true,
+      "runAtStartup": true,
+      "isSeamlessStartup": true,
       "artifactName": "WinIsleSetup.${ext}"
     }
   },

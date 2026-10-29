@@ -1,6 +1,6 @@
 {
-  "summary":  "Rencana pembaruan UI & animasi Music Player sesuai video referensi, penghapusan pencarian klik cover dengan petunjuk minimalis Alt + Q, penghapusan border bergerak saat AI berpikir, ukuran Dynamic Island seragam di semua menu tanpa UI terpotong di Calendar & Notification, peredupan glow lirik, serta fitur opsional FLAC Lossless di Settings dan indikator player.",
-  "updatedAt":  "2026-10-28T21:01:49.408331276Z",
+  "summary":  "Rencana perbaikan menyeluruh untuk mengatasi bug 'Cannot GET /' pada aplikasi desktop WinIsle: konfigurasi port khusus (45781) dengan auto-fallback, unpacking dist dari ASAR, direct loadFile fallback, dan verifikasi identitas server.",
+  "updatedAt":  "2026-10-29T02:02:55.839582190Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

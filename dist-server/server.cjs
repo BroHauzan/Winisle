@@ -69786,7 +69786,25 @@ var import_meta = {};
 var currentDir = typeof __dirname !== "undefined" ? __dirname : typeof import_meta?.url === "string" ? import_path.default.dirname((0, import_url.fileURLToPath)(import_meta.url)) : process.cwd();
 var execAsync = (0, import_util.promisify)(import_child_process.exec);
 var app = (0, import_express.default)();
-var PORT = Number(process.env.PORT) || 3e3;
+var DESKTOP_DEFAULT_PORT = 45781;
+var PORT = Number(process.env.PORT) || (process.env.ISLE_ELECTRON_STATIC === "1" ? DESKTOP_DEFAULT_PORT : 3e3);
+app.use((_req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (_req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+  next();
+});
+app.get("/api/winisle-health", (_req, res) => {
+  res.json({
+    app: "winisle-desktop",
+    version: "1.0.0",
+    status: "ready",
+    platform: process.platform
+  });
+});
 app.use(import_express.default.json({ limit: "15mb" }));
 app.use((err, _req, res, next) => {
   if (err?.type === "entity.too.large") {
@@ -71925,6 +71943,8 @@ async function startServer(customPort) {
   } else {
     const candidateDistDirs = [
       process.env.ISLE_DIST_DIR,
+      import_path.default.join(process.resourcesPath || "", "app.asar.unpacked", "dist"),
+      import_path.default.join(process.resourcesPath || "", "dist"),
       import_path.default.resolve(process.cwd(), "dist"),
       import_path.default.join(currentDir, "dist"),
       import_path.default.join(currentDir, "..", "dist")
@@ -71937,17 +71957,53 @@ async function startServer(customPort) {
       }
     });
     const targetDir = resolvedDistDir || candidateDistDirs[0] || import_path.default.resolve(process.cwd(), "dist");
-    if (import_fs2.default.existsSync(targetDir)) {
-      app.use(import_express.default.static(targetDir));
-      app.use((_req, res) => {
-        const indexPath = import_path.default.join(targetDir, "index.html");
-        if (import_fs2.default.existsSync(indexPath)) {
-          res.sendFile(indexPath);
-        } else {
-          res.status(200).send('<!DOCTYPE html><html><body style="background:transparent;color:#fff;font-family:sans-serif;display:flex;justify-content:center;padding-top:10px;"><div style="background:#09090b;padding:8px 16px;border-radius:20px;font-size:12px;border:1px solid #27272a;">WinIsle Starting...</div></body></html>');
+    const mimeTypes = {
+      ".html": "text/html; charset=utf-8",
+      ".js": "application/javascript; charset=utf-8",
+      ".mjs": "application/javascript; charset=utf-8",
+      ".css": "text/css; charset=utf-8",
+      ".json": "application/json; charset=utf-8",
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".svg": "image/svg+xml",
+      ".webp": "image/webp",
+      ".ico": "image/x-icon",
+      ".woff": "font/woff",
+      ".woff2": "font/woff2",
+      ".ttf": "font/ttf",
+      ".mp3": "audio/mpeg"
+    };
+    const serveStaticFile = (filePath, res) => {
+      try {
+        if (import_fs2.default.existsSync(filePath) && import_fs2.default.statSync(filePath).isFile()) {
+          const ext = import_path.default.extname(filePath).toLowerCase();
+          const contentType = mimeTypes[ext] || "application/octet-stream";
+          const content = import_fs2.default.readFileSync(filePath);
+          res.setHeader("Content-Type", contentType);
+          res.status(200).send(content);
+          return true;
         }
-      });
-    }
+      } catch {
+      }
+      return false;
+    };
+    app.use((req, res, next) => {
+      if (req.path.startsWith("/api/")) {
+        return next();
+      }
+      const rawPath = req.path === "/" ? "index.html" : req.path.replace(/^\/+/, "");
+      const filePath = import_path.default.join(targetDir, rawPath);
+      if (serveStaticFile(filePath, res)) {
+        return;
+      }
+      const indexPath = import_path.default.join(targetDir, "index.html");
+      if (serveStaticFile(indexPath, res)) {
+        return;
+      }
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.status(200).send('<!DOCTYPE html><html><body style="background:transparent;color:#fff;font-family:sans-serif;display:flex;justify-content:center;padding-top:10px;"><div style="background:#09090b;padding:8px 16px;border-radius:20px;font-size:12px;border:1px solid #27272a;">WinIsle Loading...</div></body></html>');
+    });
   }
   return new Promise((resolve) => {
     httpServer.on("error", (err) => {

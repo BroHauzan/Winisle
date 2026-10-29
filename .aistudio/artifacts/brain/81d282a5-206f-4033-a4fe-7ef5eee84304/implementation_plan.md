@@ -1,34 +1,75 @@
-# Rencana Implementasi Pembaruan UI, Animasi Music Player, & Fitur FLAC Opsional
+# WinIsle Desktop — Rencana Perbaikan 'Cannot GET /' & Pemantapan Overlay Windows
 
-## 1. Music Player & Animasi Mode Lirik Persis Video Referensi
-- **Penghapusan Pencarian Klik Cover & Petunjuk Minimalis AI**:
-  - Menghapus fitur klik cover album untuk membuka kolom pencarian manual.
-  - Saat belum ada musik yang diputar, menampilkan teks petunjuk minimalis **`Tekan Alt + Q untuk meminta AI memutar lagu`** di area informasi lagu tanpa membuka popup tambahan.
-- **Animasi & Tata Letak Mode Lirik 2 Kolom**:
-  - Menyesuaikan transisi ekspansi Dynamic Island saat tombol lirik (`💬`) ditekan menjadi tampilan 2 kolom (`520px x 160px`) dengan pendaran gradien ambient halus yang mengikuti warna dominan cover album di sisi bawah/kanan.
-  - **Kolom Kiri**: Menampilkan cover album, judul lagu & nama artis, bar durasi (`00:04 ──── -03:52`), serta deretan tombol kontrol `💬 ⏮ ⏸ ⏭` di bagian bawah.
-  - **Kolom Kanan**: Dipisahkan oleh garis vertikal tipis (`1px`), menampilkan status `Loading lyrics...` di tengah saat lirik sedang diambil, lalu berganti ke animasi lirik yang bergulir mulus.
-  - **Tetap Terbuka Selama Mode Lirik Aktif**: Sesuai pilihan kamu, selama mode lirik (`💬`) sedang aktif, Dynamic Island akan tetap terbuka lebar dalam tampilan 2 kolom meskipun kursor keluar dari area island.
-- **Menghilangkan Glow Lirik yang Berlebihan**:
-  - Menghapus efek `drop-shadow` neon pada lirik aktif yang sebelumnya menyebar dan terlihat terpotong di batas baris.
-  - Lirik aktif kini menggunakan teks putih bersih yang tajam (`#ffffff`, `font-bold`) dan baris lirik tidak aktif menggunakan warna putih redup (`text-white/35`) persis seperti pada video referensi.
+Rencana perbaikan arsitektural untuk menuntaskan error `Cannot GET /` pada jendela overlay Dynamic Island di Windows, memastikan pemuatan antarmuka 100% andal, terisolasi dari konflik port sistem, dan bebas dari pembatasan arsip virtual ASAR.
 
-## 2. Menghapus Animasi Border Bergerak Saat AI Berpikir
-- Menghapus elemen dan keyframe `.isle-siri-border` (garis tepi berputar) ketika AI sedang berpikir atau merespons.
-- Mempertahankan hanya animasi gradien latar belakang yang halus (`.isle-siri-glow`) agar tampilan tetap bersih dan elegan.
+> [!IMPORTANT]
+> **Keputusan yang Telah Dikonfirmasi Pengguna:**
+> - **Port Backend Desktop**: Menggunakan port khusus tinggi `45781` (bukan port umum `3000`) dengan deteksi ketersediaan otomatis (*auto-fallback* ke port bebas berikutnya jika sedang terpakai).
+> - **Strategi Pemuatan Antarmuka (UI)**: Menambahkan `asarUnpack` untuk folder `dist` pada konfigurasi `electron-builder`, serta menerapkan mekanisme *dual-mode loading* di mana Electron dapat memuat file HTML secara langsung (`mainWindow.loadFile`) dengan rute API lokal tetap terhubung ke server backend lokal yang aman.
 
-## 3. Ukuran Dynamic Island Seragam & Perbaikan UI Calendar / Notification
-- **Ukuran Konsisten di Semua Halaman Standar**:
-  - Mengunci ukuran Dynamic Island saat terbuka pada semua menu standar (`Music`, `Notifications`, `Pomodoro`, `ToDo`, `Shelf`, `Calendar`) ke ukuran tetap **`440px x 160px`**.
-  - Dengan ukuran yang seragam, posisi tombol panah navigasi kiri (`<`) dan kanan (`>`) tidak akan bergeser sama sekali ketika berpindah antar menu.
-- **Perbaikan Tampilan Calendar & Notifications Tanpa Terpotong**:
-  - **Calendar**: Merombak grid tanggal dan panel jadwal di sebelah kanan menjadi tata letak kompak berjarak rapat (`compact grid`) yang pas di dalam tinggi `160px` tanpa ada baris tanggal atau tombol yang terpotong.
-  - **Notifications**: Menyesuaikan tinggi kartu notifikasi dan area scroll agar seluruh pesan terlihat utuh dan tetap minimalis di dalam ruang Dynamic Island yang seragam.
+---
 
-## 4. Fitur Opsional FLAC (Lossless Audio)
-- **Pengaturan di Menu Settings & Indikator Kecil di Player**:
-  - Menambahkan tombol switch **FLAC Lossless Audio** di dalam menu **Settings (ikon gear)**.
-  - Menampilkan badge indikator kecil **`FLAC`** di area Music Player saat fitur Lossless diaktifkan.
-- **Logika Pemutaran**:
-  - Ketika opsi FLAC dimatikan (default), pemutar langsung menggunakan sumber YouTube Music Full Audio.
-  - Ketika opsi FLAC diaktifkan oleh pengguna, backend akan mengambil stream audio berkualitas tinggi (FLAC Lossless via Monochrome) terlebih dahulu, dengan fallback ke YouTube Music Full Audio apabila lagu tersebut tidak tersedia dalam format FLAC.
+## 1. Analisis Akar Masalah (Root Cause)
+
+Berdasarkan analisis log dan tangkapan layar `Cannot GET /`:
+
+1. **Konflik Port 3000 & Validasi Health-Check Palsu**:
+   - Port `3000` adalah port yang sangat umum digunakan oleh berbagai aplikasi pengembang (Next.js, Create React App, Express) atau proses lama `WinIsle` yang masih berjalan di latar belakang.
+   - Fungsi `isServerAlive()` sebelumnya hanya mengecek koneksi HTTP tanpa memvalidasi status `200 OK` dan identitas aplikasi. Akibatnya, jika ada proses lain di port 3000 yang merespons 404, Electron menganggap server siap dan memuat `http://127.0.0.1:3000/`, menampilkan halaman error 404 putih bawaan Express (`Cannot GET /`).
+
+2. **Keterbatasan Streaming Express di Dalam Arsip `app.asar`**:
+   - Ketika dikemas menjadi `WinIsleSetup.exe`, `electron-builder` memasukkan seluruh aset ke dalam satu file arsip `resources/app.asar`.
+   - Modul `send` bawaan `express.static` dan `res.sendFile` sering mengalami kegagalan *file descriptor stream* saat membaca file di dalam `.asar` virtual pada sistem operasi Windows, menyebabkan Express melompat ke final 404 handler.
+
+---
+
+## 2. Solusi & Rencana Implementasi
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      WinIsle Desktop                        │
+│                                                             │
+│   ┌────────────────────────┐      ┌─────────────────────┐   │
+│   │ Electron Overlay Window│◄────►│ Local Backend Server│   │
+│   │ (Transparent, Frameless│      │ (dist-server.cjs)   │   │
+│   │ Always-On-Top, Center) │      │ Dedicated Port:     │   │
+│   └───────────┬────────────┘      │ 45781 (Auto-shift)  │   │
+│               │                   └──────────┬──────────┘   │
+│               ▼                              ▼              │
+│    Primary: Native file://         Health Handshake         │
+│    (Unpacked dist/index.html)      /api/winisle-health      │
+│    Fallback: http://127.0.0.1      MIME/Buffer Direct Serve │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Langkah 1: Isolasi Port & Health-Check Terverifikasi (`electron/main.cjs` & `server.ts`)
+- Ubah port bawaan desktop dari `3000` menjadi port khusus `45781`.
+- Tambahkan rute handshake khusus `/api/winisle-health` yang mengembalikan signature `{ app: 'winisle-desktop', version: '1.0.0', status: 'ready' }`.
+- Perbarui fungsi verifikasi server di Electron agar hanya menganggap server aktif jika respons berstatus `200` dan mengembalikan signature valid.
+- Jika port `45781` sedang terpakai oleh aplikasi lain, server otomatis mencoba port alternatif (`45782`, `45783`, dst.) dan meneruskannya ke jendela Electron.
+
+### Langkah 2: Konfigurasi `electron-builder` & Relatif Base Path (`package.json` & `vite.config.ts`)
+- Di `vite.config.ts`, tambahkan konfigurasi `base: './'` agar semua bundel aset JavaScript, CSS, dan media menggunakan path relatif yang kompatibel baik dengan server HTTP (`http://127.0.0.1:...`) maupun pemuatan file lokal langsung (`file:///.../dist/index.html`).
+- Di `package.json` pada blok `"build"`, tambahkan opsi:
+  - `"asarUnpack": ["dist/**/*", "dist-server/**/*"]` agar folder `dist` dan server diletakkan sebagai file fisik di disk Windows, sehingga tidak terikat kompresi virtual ASAR.
+
+### Langkah 3: Mekanisme Pemuatan Handal & Pembersih Latar Belakang (`electron/main.cjs`)
+- Implementasikan pemuatan berjenjang (*dual loading*):
+  1. Coba muat `mainWindow.loadFile(unpackedIndexPath)`. Ini menjamin antarmuka langsung tampil tanpa jeda koneksi soket, transparan, dan tidak akan pernah terkena error HTTP 404 `Cannot GET /`.
+  2. Suntikkan konfigurasi port API aktif (`window.__WINISLE_SERVER_PORT__ = activePort`) ke web context renderer agar seluruh fitur (Pencarian musik YouTube/LRCLIB, Gemini Live Audio WebSocket, Kontrol Hardware Windows Master Volume/Baterai) tetap terhubung ke backend lokal.
+- Tambahkan perintah pembersihan proses lama (*kill stale WinIsle instances*) saat aplikasi dijalankan, sehingga tidak ada proses zombie yang tertinggal di task manager.
+
+### Langkah 4: Buffer-Safe Static File Handler di `server.ts`
+- Pada `server.ts`, ganti pemanggilan `res.sendFile` rentan dengan handler berkas berbasis `fs.readFileSync` langsung yang mendukung MIME types lengkap (`text/html`, `application/javascript`, `text/css`, dll.) sebagai jaring pengaman kedua jika renderer mengakses aset melalui HTTP.
+
+---
+
+## 3. Langkah Pengujian & Verifikasi
+
+1. **Pengujian Dev & Web**:
+   - Jalankan `compile_applet` untuk memastikan `vite build` dengan `base: './'` berhasil tanpa error modul.
+   - Jalankan `lint_applet` untuk memverifikasi validitas TypeScript dan ketiadaan regresi kode.
+2. **Pengujian Bundel Server**:
+   - Jalankan `npm run build:server` untuk memverifikasi kompilasi `dist-server/server.cjs` dan ikon tray.
+3. **Pengujian Startup Mandiri**:
+   - Uji respons endpoint `/api/winisle-health` dan verifikasi bahwa jendela Electron memuat Dynamic Island secara instan dan bersih dengan background transparan.

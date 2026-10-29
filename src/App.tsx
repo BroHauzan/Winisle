@@ -44,6 +44,7 @@ import {
 } from './components/IsleIcons';
 import { BotColorName, BotForm, BotShapeName, paletteFor } from './core/bot';
 import { parseLrc, SAMPLE_TRACKS } from './core/lrc';
+import { getWsBaseUrl } from './utils/apiBase';
 
 type IslandPage = 'music' | 'notifications' | 'pomodoro' | 'todolist' | 'shelf' | 'calendar';
 
@@ -3522,8 +3523,8 @@ export default function App() {
       liveOutputAccRef.current = '';
 
       // 1. Connect to Server-Side Gemini 3.8 Live API WebSocket (/api/gemini/live)
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${proto}//${window.location.host}/api/gemini/live?lang=${encodeURIComponent(voiceLang)}`;
+      const wsBase = getWsBaseUrl();
+      const wsUrl = `${wsBase}/api/gemini/live?lang=${encodeURIComponent(voiceLang)}`;
 
       let wsConnected = false;
       try {
