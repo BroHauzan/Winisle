@@ -71958,6 +71958,7 @@ async function startServer(customPort) {
       }
     }
   });
+  let viteActive = false;
   const isDev = process.env.NODE_ENV !== "production" && process.env.ISLE_ELECTRON_STATIC !== "1";
   if (isDev) {
     try {
@@ -71984,10 +71985,13 @@ async function startServer(customPort) {
         }
         next();
       });
+      viteActive = true;
     } catch (viteErr) {
-      console.warn("Vite dev server middleware unavailable, continuing without Vite:", viteErr);
+      console.warn("Vite dev server middleware unavailable, falling back to static build:", viteErr);
+      viteActive = false;
     }
-  } else {
+  }
+  if (!viteActive) {
     const candidateDistDirs = [
       process.env.ISLE_DIST_DIR,
       import_path.default.join(process.resourcesPath || "", "app.asar.unpacked", "dist"),

@@ -2696,6 +2696,7 @@ export async function startServer(customPort?: number) {
     }
   });
 
+  let viteActive = false;
   const isDev =
     process.env.NODE_ENV !== 'production' && process.env.ISLE_ELECTRON_STATIC !== '1';
 
@@ -2724,10 +2725,14 @@ export async function startServer(customPort?: number) {
         }
         next();
       });
+      viteActive = true;
     } catch (viteErr) {
-      console.warn('Vite dev server middleware unavailable, continuing without Vite:', viteErr);
+      console.warn('Vite dev server middleware unavailable, falling back to static build:', viteErr);
+      viteActive = false;
     }
-  } else {
+  }
+
+  if (!viteActive) {
     // Robustly locate the static UI distribution folder across unpacked & packaged paths
     const candidateDistDirs = [
       process.env.ISLE_DIST_DIR,
