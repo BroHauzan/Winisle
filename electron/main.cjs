@@ -87,14 +87,14 @@ function getUnpackedDistDir() {
     path.join(app.getAppPath(), 'dist'),
     path.join(process.resourcesPath || '', 'dist'),
     path.join(process.resourcesPath || '', 'app.asar', 'dist'),
-    path.join(__dirname, '..'),
-    app.getAppPath(),
+    path.resolve(process.cwd(), 'dist'),
   ].filter(Boolean);
 
   return (
     candidateDistDirs.find((d) => {
       try {
-        return fs.existsSync(path.join(d, 'index.html'));
+        const indexFile = path.join(d, 'index.html');
+        return fs.existsSync(indexFile) && fs.statSync(indexFile).isFile();
       } catch {
         return false;
       }
@@ -405,28 +405,25 @@ function createOverlayWindow() {
   mainWindow.webContents.on('dom-ready', injectServerUrl);
 
   // Dual-mode Loading:
-  // Primary: Native file loading (100% immune to HTTP 404 "Cannot GET /" and instant zero-latency load)
-  // Fallback: Local HTTP server URL (http://127.0.0.1:45781)
-  if (fs.existsSync(indexPath)) {
-    mainWindow
-      .loadFile(indexPath)
-      .then(() => {
-        injectServerUrl();
-      })
-      .catch((err) => {
-        console.warn('[WinIsle] Direct loadFile failed, falling back to loadURL...', err?.message);
-        mainWindow.loadURL(SERVER_URL).catch((e) => console.error('[WinIsle] Secondary loadURL error:', e));
-      });
-  } else {
-    mainWindow.loadURL(SERVER_URL).catch((err) => {
-      console.warn('[WinIsle] Initial loadURL failed, retrying in 1s...', err?.message);
-      setTimeout(() => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.loadURL(SERVER_URL).catch((e) => console.error('[WinIsle] Secondary loadURL error:', e));
-        }
-      }, 1200);
+  // Primary: Load through verified local server URL (http://127.0.0.1:45781) so all relative /api endpoints, WebSockets, and assets work seamlessly
+  // Fallback: Direct local file loading
+  mainWindow
+    .loadURL(SERVER_URL)
+    .then(() => {
+      injectServerUrl();
+    })
+    .catch((err) => {
+      console.warn('[WinIsle] Initial loadURL failed, trying direct file loading...', err?.message);
+      if (fs.existsSync(indexPath)) {
+        mainWindow.loadFile(indexPath).catch((e) => console.error('[WinIsle] Secondary loadFile error:', e));
+      } else {
+        setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.loadURL(SERVER_URL).catch(() => {});
+          }
+        }, 1200);
+      }
     });
-  }
 
   // Re-center if monitor resolution or display scaling changes
   const handleDisplayChange = () => positionWindowTopCenter(mainWindow);

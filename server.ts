@@ -2736,13 +2736,12 @@ export async function startServer(customPort?: number) {
       path.resolve(process.cwd(), 'dist'),
       path.join(currentDir, 'dist'),
       path.join(currentDir, '..', 'dist'),
-      path.resolve(process.cwd()),
-      path.join(currentDir, '..'),
     ].filter(Boolean) as string[];
 
     const resolvedDistDir = candidateDistDirs.find((dir) => {
       try {
-        return fs.existsSync(path.join(dir, 'index.html'));
+        const indexFile = path.join(dir, 'index.html');
+        return fs.existsSync(indexFile) && fs.statSync(indexFile).isFile();
       } catch {
         return false;
       }
@@ -2750,58 +2749,17 @@ export async function startServer(customPort?: number) {
 
     const targetDir = resolvedDistDir || candidateDistDirs[0] || path.resolve(process.cwd(), 'dist');
 
-    const mimeTypes: Record<string, string> = {
-      '.html': 'text/html; charset=utf-8',
-      '.js': 'application/javascript; charset=utf-8',
-      '.mjs': 'application/javascript; charset=utf-8',
-      '.css': 'text/css; charset=utf-8',
-      '.json': 'application/json; charset=utf-8',
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.svg': 'image/svg+xml',
-      '.webp': 'image/webp',
-      '.ico': 'image/x-icon',
-      '.woff': 'font/woff',
-      '.woff2': 'font/woff2',
-      '.ttf': 'font/ttf',
-      '.mp3': 'audio/mpeg',
-    };
+    // Efficiently serve compiled web assets via Express static middleware
+    app.use(express.static(targetDir));
 
-    const serveStaticFile = (filePath: string, res: Response): boolean => {
-      try {
-        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-          const ext = path.extname(filePath).toLowerCase();
-          const contentType = mimeTypes[ext] || 'application/octet-stream';
-          const content = fs.readFileSync(filePath);
-          res.setHeader('Content-Type', contentType);
-          res.status(200).send(content);
-          return true;
-        }
-      } catch {
-        // fallback
-      }
-      return false;
-    };
-
-    // Buffer-safe static handler ensuring no 404 "Cannot GET /" can ever occur
+    // Buffer-safe SPA fallback handler
     app.use((req, res, next) => {
       if (req.path.startsWith('/api/')) {
         return next();
       }
-      const rawPath = req.path === '/' ? 'index.html' : req.path.replace(/^\/+/, '');
-      const filePath = path.join(targetDir, rawPath);
-      if (serveStaticFile(filePath, res)) {
-        return;
-      }
-      // SPA fallback to index.html
       const indexPath = path.join(targetDir, 'index.html');
-      if (serveStaticFile(indexPath, res)) {
-        return;
-      }
-      const rootIndex = path.join(currentDir, '..', 'index.html');
-      if (serveStaticFile(rootIndex, res)) {
-        return;
+      if (fs.existsSync(indexPath)) {
+        return res.sendFile(indexPath);
       }
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.status(200).send(`<!DOCTYPE html>

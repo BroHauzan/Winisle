@@ -1,4 +1,7 @@
 /target
 gnome-extension/schemas/gschemas.compiled
 /dist
+/dist-server
+/release
 /node_modules
+
