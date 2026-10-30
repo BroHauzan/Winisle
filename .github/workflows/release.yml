@@ -33,7 +33,7 @@ jobs:
         run: npm install --legacy-peer-deps --include=dev
 
       - name: Build Web App (Vite)
-        run: npx vite build
+        run: npm run build
 
       - name: Verify Web Dist
         shell: pwsh
@@ -57,7 +57,7 @@ jobs:
           Write-Host "Server build verified! dist-server/server.cjs exists."
 
       - name: Build WinIsleSetup.exe via Electron Builder
-        run: npx electron-builder --win nsis --x64 --publish never
+        run: npx --yes electron-builder --win nsis --x64 --publish never
 
       - name: Package WinIsleSetup.zip
         run: node scripts/package-release-zip.mjs
@@ -76,8 +76,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         continue-on-error: true
         with:
-          tag_name: ${{ inputs.tag_name || github.event.inputs.tag_name || 'v1.0.0' }}
-          name: WinIsle ${{ inputs.tag_name || github.event.inputs.tag_name || 'v1.0.0' }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag_name || 'v1.1.0' }}
+          name: WinIsle ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag_name || 'v1.1.0' }}
           target_commitish: ${{ github.sha }}
           draft: false
           prerelease: false
