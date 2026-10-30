@@ -873,6 +873,16 @@ export default function App() {
     (isHovered || isPinnedOpen || dragAutoOpened || isDragOver || assistantOpen || lyricsMode) &&
     !activeAlert;
 
+  // Trigger lightweight native memory trimming whenever the island collapses back to compact notch
+  useEffect(() => {
+    if (!isExpanded) {
+      const timer = window.setTimeout(() => {
+        (window as any).electronAPI?.trimMemory?.();
+      }, 400);
+      return () => window.clearTimeout(timer);
+    }
+  }, [isExpanded]);
+
   // Helper to safely add files to Shelf with Chaos Engineering guards (max 6 files, deduplication, sanitized names)
   const addFilesToShelf = useCallback(
     (incoming: { name: string; size: string; ext?: ShelfFileExt }[]) => {

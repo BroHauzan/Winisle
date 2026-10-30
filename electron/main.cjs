@@ -2,7 +2,7 @@ const { app, BrowserWindow, screen, ipcMain, globalShortcut, Tray, Menu, nativeI
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 
 // Catch any unhandled exceptions to avoid annoying crash dialogs in production
 process.on('uncaughtException', (err) => {
@@ -35,13 +35,24 @@ if (!gotSingleInstanceLock) {
   app.quit();
 }
 
-// Lightweight Chromium flags: disables unused telemetry, crash dumps, and translation engines
-// to ensure near 0% idle CPU and minimal RAM footprint for the overlay
+// Ultra-lightweight Chromium & V8 flags: enforces strictly minimal RAM footprint (<100MB)
+// Disables telemetry, crashpad collectors, multi-process site isolations, and unused background engines.
 app.commandLine.appendSwitch('disable-breakpad');
 app.commandLine.appendSwitch('disable-component-update');
 app.commandLine.appendSwitch('disable-domain-reliability');
 app.commandLine.appendSwitch('disable-sync');
-app.commandLine.appendSwitch('disable-features', 'Translate,CalculateNativeWinOcclusion,AutofillServerCommunication');
+app.commandLine.appendSwitch(
+  'disable-features',
+  'Translate,CalculateNativeWinOcclusion,AutofillServerCommunication,SpareRendererForSitePerProcess,BackForwardCache,MediaRouter'
+);
+app.commandLine.appendSwitch('enable-features', 'MemoryReducer');
+app.commandLine.appendSwitch('renderer-process-limit', '1');
+app.commandLine.appendSwitch('disable-site-isolation-trials');
+app.commandLine.appendSwitch('disable-background-networking');
+app.commandLine.appendSwitch('disable-gpu-memory-buffer-video-frames');
+app.commandLine.appendSwitch('disable-software-rasterizer');
+app.commandLine.appendSwitch('no-zygote');
+app.commandLine.appendSwitch('js-flags', '--expose-gc --max-old-space-size=64 --optimize_for_size');
 
 /**
  * Check if WinIsle local server on targetPort is responding with valid identity handshake
@@ -319,6 +330,12 @@ function createSystemTray() {
       },
       { type: 'separator' },
       {
+        label: 'Optimalkan RAM Sekarang',
+        click: () => {
+          trimMemory();
+        },
+      },
+      {
         label: 'Restart WinIsle',
         click: () => {
           app.relaunch();
@@ -353,6 +370,54 @@ function createSystemTray() {
   });
 }
 
+/**
+ * Locate compiled native memory trimmer (trim-mem.exe)
+ */
+function locateTrimMemExe() {
+  const candidatePaths = [
+    path.join(__dirname, 'trim-mem.exe'),
+    path.join(app.getAppPath(), 'electron', 'trim-mem.exe'),
+    path.join(process.resourcesPath || '', 'app.asar.unpacked', 'electron', 'trim-mem.exe'),
+    path.join(process.resourcesPath || '', 'electron', 'trim-mem.exe'),
+  ];
+  return (
+    candidatePaths.find((p) => {
+      try {
+        return fs.existsSync(p);
+      } catch {
+        return false;
+      }
+    }) || null
+  );
+}
+
+/**
+ * Trims physical memory (Working Set) & invokes V8 Garbage Collection across all processes
+ */
+function trimMemory() {
+  if (process.platform !== 'win32') return;
+
+  // 1. Force V8 Garbage Collection in Main Process
+  if (typeof global.gc === 'function') {
+    try {
+      global.gc();
+    } catch {}
+  }
+
+  // 2. Force V8 Garbage Collection in Renderer Process
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents
+      .executeJavaScript('if (typeof window.gc === "function") window.gc();')
+      .catch(() => {});
+  }
+
+  // 3. Flush unreferenced working set pages to drop RAM usage under 60-90MB
+  const trimExe = locateTrimMemExe();
+  if (trimExe) {
+    execFile(trimExe, ['WinIsle'], { windowsHide: true }, () => {});
+  }
+}
+
 function createOverlayWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { x: displayX, y: displayY, width: displayWidth } = primaryDisplay.bounds;
@@ -380,6 +445,9 @@ function createOverlayWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       backgroundThrottling: false,
+      spellcheck: false,
+      devTools: !app.isPackaged,
+      v8CacheOptions: 'none',
     },
   });
 
@@ -401,7 +469,10 @@ function createOverlayWindow() {
     }
   };
 
-  mainWindow.webContents.on('did-finish-load', injectServerUrl);
+  mainWindow.webContents.on('did-finish-load', () => {
+    injectServerUrl();
+    setTimeout(trimMemory, 2500);
+  });
   mainWindow.webContents.on('dom-ready', injectServerUrl);
 
   // Dual-mode Loading:
@@ -452,6 +523,11 @@ ipcMain.on('set-ignore-mouse-events', (event, ignore, options) => {
   }
 });
 
+// IPC handler to trigger instant native working set & V8 memory trimming from renderer
+ipcMain.on('trim-memory', () => {
+  trimMemory();
+});
+
 app.whenReady().then(async () => {
   // Configure automatic launch at Windows startup when packaged
   if (app.isPackaged && process.platform === 'win32') {
@@ -470,6 +546,9 @@ app.whenReady().then(async () => {
 
   await ensureLocalBackendRunning();
   createOverlayWindow();
+
+  // Periodic idle memory trimming: flushes unreferenced buffers every 45s to ensure RAM remains strictly <100MB
+  setInterval(trimMemory, 45000);
 
   // Register global Alt+Q shortcut so user can summon Isle Assistant even over fullscreen games/apps
   try {

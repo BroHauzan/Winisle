@@ -28,4 +28,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('toggle-isle-assistant', handler);
     };
   },
+  /**
+   * Trigger native physical memory (Working Set) and V8 GC trimming.
+   */
+  trimMemory: () => {
+    ipcRenderer.send('trim-memory');
+  },
 });
