@@ -11,9 +11,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
-    "tauri": "deno run -A --node-modules-dir npm:@tauri-apps/cli",
-    "tauri:dev": "deno run -A --node-modules-dir npm:@tauri-apps/cli dev",
-    "tauri:build": "deno run -A --node-modules-dir npm:@tauri-apps/cli build"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
