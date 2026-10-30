@@ -485,6 +485,46 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [nudgeCount, setNudgeCount] = useState(0);
 
+  // ── Google Gemini API Key State & Storage ──
+  const [geminiApiKey, setGeminiApiKey] = useState<string>(() => {
+    try {
+      return window.localStorage.getItem('isle_gemini_api_key') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [apiKeySaveStatus, setApiKeySaveStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/gemini/config')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.hasKey && !geminiApiKey && data?.maskedKey) {
+          // Backend has key active
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleSaveGeminiKey = useCallback(async (keyToSave?: string) => {
+    const key = (keyToSave ?? geminiApiKey).trim();
+    if (!key) return;
+    try {
+      window.localStorage.setItem('isle_gemini_api_key', key);
+      setGeminiApiKey(key);
+      await fetch('/api/gemini/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: key }),
+      });
+      setApiKeySaveStatus('Tersimpan!');
+      window.setTimeout(() => setApiKeySaveStatus(null), 2500);
+    } catch {
+      setApiKeySaveStatus('Gagal');
+      window.setTimeout(() => setApiKeySaveStatus(null), 2500);
+    }
+  }, [geminiApiKey]);
+
   // Input ref for immediate auto-focus when opening Assistant in Type mode (Alt+Q)
   const assistantInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -3216,7 +3256,10 @@ export default function App() {
     try {
       const res = await fetch('/api/gemini/assistant', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-gemini-key': geminiApiKey || '',
+        },
         signal: controller.signal,
         body: JSON.stringify({
           prompt: effectivePrompt,
@@ -3469,7 +3512,9 @@ export default function App() {
 
       // 1. Connect to Server-Side Gemini 3.8 Live API WebSocket (/api/gemini/live)
       const wsBase = getWsBaseUrl();
-      const wsUrl = `${wsBase}/api/gemini/live?lang=${encodeURIComponent(voiceLang)}`;
+      const wsUrl = `${wsBase}/api/gemini/live?lang=${encodeURIComponent(voiceLang)}${
+        geminiApiKey ? `&key=${encodeURIComponent(geminiApiKey)}` : ''
+      }`;
 
       let wsConnected = false;
       try {
@@ -6291,6 +6336,31 @@ export default function App() {
                           </div>
                         </div>
 
+                        {/* Direct Button if Gemini API Key is missing */}
+                        {latestAssistantMessage.text.includes('API Key Gemini') && (
+                          <div className="pl-6 pt-1 flex items-center gap-2 animate-[isleFadeIn_180ms_ease-out]">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setAssistantOpen(false);
+                                setSettingsOpen(true);
+                              }}
+                              className="px-2.5 py-1 rounded-full bg-[#0a84ff] hover:bg-[#0a84ff]/80 text-white text-[10px] font-bold transition flex items-center gap-1 cursor-pointer"
+                            >
+                              ⚙️ Masukkan API Key di Settings
+                            </button>
+                            <a
+                              href="https://aistudio.google.com/apikey"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[9.5px] text-[#0a84ff] hover:underline"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              Dapatkan Key Gratis &rarr;
+                            </a>
+                          </div>
+                        )}
+
                         {/* Compact PC System Control / Terminal Card (Bluetooth, Wi-Fi, Terminal stdout) */}
                         {latestAssistantMessage.commandCard &&
                           animatingMsgId !== latestAssistantMessage.id && (
@@ -6800,6 +6870,43 @@ export default function App() {
                     >
                       Done
                     </button>
+                  </div>
+
+                  {/* Google Gemini API Key Configuration Row */}
+                  <div className="flex items-center justify-between gap-2 bg-white/[0.05] rounded-xl px-3 py-1.5">
+                    <div className="flex flex-col flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-white text-[10.5px]">Google Gemini API Key</span>
+                        <a
+                          href="https://aistudio.google.com/apikey"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[9px] text-[#0a84ff] hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          Dapatkan Key Gratis &rarr;
+                        </a>
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <input
+                          type="password"
+                          value={geminiApiKey}
+                          onChange={(e) => setGeminiApiKey(e.target.value)}
+                          placeholder="Tempel API Key (AIzaSy...)"
+                          className="flex-1 bg-black/40 border border-white/10 rounded-lg px-2 py-0.5 text-[9.5px] text-white placeholder-white/30 focus:outline-none focus:border-[#0a84ff]"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSaveGeminiKey();
+                          }}
+                          className="px-2.5 py-0.5 rounded-lg bg-[#0a84ff] hover:bg-[#0a84ff]/80 text-white text-[9.5px] font-bold transition shrink-0"
+                        >
+                          {apiKeySaveStatus || 'Simpan'}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               ) : (

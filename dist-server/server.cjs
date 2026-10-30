@@ -69836,6 +69836,25 @@ app.get("/api/winisle-health", (_req, res) => {
     platform: process.platform
   });
 });
+app.get("/api/gemini/config", (_req, res) => {
+  const currentKey = (process.env.GEMINI_API_KEY || process.env.API_KEY || loadPersistedGeminiKey() || "").trim();
+  res.json({
+    hasKey: Boolean(currentKey),
+    maskedKey: currentKey ? `${currentKey.slice(0, 4)}\u2022\u2022\u2022\u2022${currentKey.slice(-4)}` : ""
+  });
+});
+app.post("/api/gemini/config", (req, res) => {
+  const key = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
+  if (!key) {
+    return res.status(400).json({ error: "API key cannot be empty" });
+  }
+  const ok = savePersistedGeminiKey(key);
+  res.json({
+    ok,
+    hasKey: true,
+    maskedKey: `${key.slice(0, 4)}\u2022\u2022\u2022\u2022${key.slice(-4)}`
+  });
+});
 app.use(import_express.default.json({ limit: "15mb" }));
 app.use((err, _req, res, next) => {
   if (err?.type === "entity.too.large") {
@@ -69886,8 +69905,32 @@ function checkRateLimit(clientKey) {
   bucket.timestamps.push(now);
   return { allowed: true, retryAfterMs: 0 };
 }
-function getGeminiClient() {
-  const key = (process.env.GEMINI_API_KEY || process.env.API_KEY || "").trim();
+var CONFIG_DIR = process.env.APPDATA ? import_path.default.join(process.env.APPDATA, "WinIsle") : import_path.default.resolve(process.cwd(), ".winisle");
+var GEMINI_KEY_FILE = import_path.default.join(CONFIG_DIR, "gemini_key.txt");
+function loadPersistedGeminiKey() {
+  try {
+    if (import_fs2.default.existsSync(GEMINI_KEY_FILE)) {
+      return import_fs2.default.readFileSync(GEMINI_KEY_FILE, "utf-8").trim();
+    }
+  } catch {
+  }
+  return "";
+}
+function savePersistedGeminiKey(key) {
+  try {
+    if (!import_fs2.default.existsSync(CONFIG_DIR)) {
+      import_fs2.default.mkdirSync(CONFIG_DIR, { recursive: true });
+    }
+    import_fs2.default.writeFileSync(GEMINI_KEY_FILE, key.trim(), "utf-8");
+    process.env.GEMINI_API_KEY = key.trim();
+    return true;
+  } catch (err) {
+    console.error("Failed to save Gemini key:", err);
+    return false;
+  }
+}
+function getGeminiClient(customKey) {
+  const key = (customKey || process.env.GEMINI_API_KEY || process.env.API_KEY || loadPersistedGeminiKey() || "").trim();
   if (!key) return null;
   return new GoogleGenAI2({
     apiKey: key,
@@ -71550,12 +71593,14 @@ app.post("/api/gemini/assistant", async (req, res) => {
     const text = sanitizeText(m2?.text, 250);
     return text ? `${role}: ${text}` : null;
   }).filter(Boolean).join("\n");
-  const ai = getGeminiClient();
+  const clientKey = req.headers["x-gemini-key"] || req.body?.apiKey;
+  const ai = getGeminiClient(clientKey);
   if (!ai) {
     return res.status(503).json({
       error: "GEMINI_API_KEY is not configured on the server.",
-      reply: "API Key Gemini belum terdeteksi di server. Pastikan GEMINI_API_KEY aktif di Settings > Secrets.",
-      action: "none"
+      reply: "API Key Gemini belum diatur. Silakan masukkan Gemini API Key gratis Anda melalui menu Settings atau tombol di bawah.",
+      action: "none",
+      needApiKey: true
     });
   }
   const liveWebPromise = imageBase64 ? Promise.resolve({ snippets: [], sources: [] }) : fetchLiveWebSearchData(prompt);
@@ -71798,17 +71843,19 @@ async function startServer(customPort) {
     }
   });
   wss.on("connection", async (clientWs, req) => {
-    const ai = getGeminiClient();
+    const urlParams = new URLSearchParams((req.url || "").split("?")[1] || "");
+    const clientKey = urlParams.get("key") || req.headers["x-gemini-key"];
+    const ai = getGeminiClient(clientKey);
     if (!ai) {
       clientWs.send(
         JSON.stringify({
-          error: "GEMINI_API_KEY is not configured on the server."
+          error: "GEMINI_API_KEY is not configured on the server.",
+          needApiKey: true
         })
       );
       clientWs.close();
       return;
     }
-    const urlParams = new URLSearchParams((req.url || "").split("?")[1] || "");
     const lang = urlParams.get("lang") === "en-US" ? "English" : "Indonesian (or English if spoken to in English)";
     let isClosed = false;
     let activeSession = null;

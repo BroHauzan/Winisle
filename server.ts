@@ -42,6 +42,33 @@ app.get('/api/winisle-health', (_req, res) => {
   });
 });
 
+// Endpoint to check & configure Gemini API Key directly from Dynamic Island UI
+app.get('/api/gemini/config', (_req, res) => {
+  const currentKey = (
+    process.env.GEMINI_API_KEY ||
+    process.env.API_KEY ||
+    loadPersistedGeminiKey() ||
+    ''
+  ).trim();
+  res.json({
+    hasKey: Boolean(currentKey),
+    maskedKey: currentKey ? `${currentKey.slice(0, 4)}••••${currentKey.slice(-4)}` : '',
+  });
+});
+
+app.post('/api/gemini/config', (req, res) => {
+  const key = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
+  if (!key) {
+    return res.status(400).json({ error: 'API key cannot be empty' });
+  }
+  const ok = savePersistedGeminiKey(key);
+  res.json({
+    ok,
+    hasKey: true,
+    maskedKey: `${key.slice(0, 4)}••••${key.slice(-4)}`,
+  });
+});
+
 // Chaos Engineering Guard 1: 15MB JSON body limit to support Multimodal Vision image uploads & screenshots
 app.use(express.json({ limit: '15mb' }));
 
@@ -113,9 +140,46 @@ function checkRateLimit(clientKey: string): {
   return { allowed: true, retryAfterMs: 0 };
 }
 
-// Dynamic Server-Side Gemini Client Resolver (picks up process.env.GEMINI_API_KEY on every request)
-function getGeminiClient(): GoogleGenAI | null {
-  const key = (process.env.GEMINI_API_KEY || process.env.API_KEY || '').trim();
+const CONFIG_DIR = process.env.APPDATA
+  ? path.join(process.env.APPDATA, 'WinIsle')
+  : path.resolve(process.cwd(), '.winisle');
+
+const GEMINI_KEY_FILE = path.join(CONFIG_DIR, 'gemini_key.txt');
+
+function loadPersistedGeminiKey(): string {
+  try {
+    if (fs.existsSync(GEMINI_KEY_FILE)) {
+      return fs.readFileSync(GEMINI_KEY_FILE, 'utf-8').trim();
+    }
+  } catch {
+    // fallback
+  }
+  return '';
+}
+
+function savePersistedGeminiKey(key: string): boolean {
+  try {
+    if (!fs.existsSync(CONFIG_DIR)) {
+      fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    }
+    fs.writeFileSync(GEMINI_KEY_FILE, key.trim(), 'utf-8');
+    process.env.GEMINI_API_KEY = key.trim();
+    return true;
+  } catch (err) {
+    console.error('Failed to save Gemini key:', err);
+    return false;
+  }
+}
+
+// Dynamic Server-Side Gemini Client Resolver (supports client header, env vars, or persisted file)
+function getGeminiClient(customKey?: string): GoogleGenAI | null {
+  const key = (
+    customKey ||
+    process.env.GEMINI_API_KEY ||
+    process.env.API_KEY ||
+    loadPersistedGeminiKey() ||
+    ''
+  ).trim();
   if (!key) return null;
   return new GoogleGenAI({
     apiKey: key,
@@ -2239,12 +2303,14 @@ app.post('/api/gemini/assistant', async (req, res) => {
     .filter(Boolean)
     .join('\n');
 
-  const ai = getGeminiClient();
+  const clientKey = (req.headers['x-gemini-key'] as string) || req.body?.apiKey;
+  const ai = getGeminiClient(clientKey);
   if (!ai) {
     return res.status(503).json({
       error: 'GEMINI_API_KEY is not configured on the server.',
-      reply: 'API Key Gemini belum terdeteksi di server. Pastikan GEMINI_API_KEY aktif di Settings > Secrets.',
+      reply: 'API Key Gemini belum diatur. Silakan masukkan Gemini API Key gratis Anda melalui menu Settings atau tombol di bawah.',
       action: 'none',
+      needApiKey: true,
     });
   }
 
@@ -2516,18 +2582,20 @@ export async function startServer(customPort?: number) {
   });
 
   wss.on('connection', async (clientWs: WebSocket, req) => {
-    const ai = getGeminiClient();
+    const urlParams = new URLSearchParams((req.url || '').split('?')[1] || '');
+    const clientKey = urlParams.get('key') || (req.headers['x-gemini-key'] as string);
+    const ai = getGeminiClient(clientKey);
     if (!ai) {
       clientWs.send(
         JSON.stringify({
           error: 'GEMINI_API_KEY is not configured on the server.',
+          needApiKey: true,
         })
       );
       clientWs.close();
       return;
     }
 
-    const urlParams = new URLSearchParams((req.url || '').split('?')[1] || '');
     const lang = urlParams.get('lang') === 'en-US' ? 'English' : 'Indonesian (or English if spoken to in English)';
 
     let isClosed = false;
