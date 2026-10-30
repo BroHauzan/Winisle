@@ -6,6 +6,7 @@
 export interface GeminiAssistantParams {
   prompt: string;
   apiKey?: string;
+  model?: string;
   image?: {
     data: string; // base64 without prefix
     mimeType: string;
@@ -85,8 +86,19 @@ export async function askGeminiAssistant(
     parts: userParts,
   });
 
-  // Try candidate models in order: gemini-2.5-flash -> gemini-2.0-flash -> gemini-1.5-flash
-  const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+  // Priority candidate models: prioritize Gemini 3.8 Flash & Gemini 3.1 Flash
+  const candidateModels = params.model
+    ? [params.model, 'gemini-3.8-flash', 'gemini-3.1-flash', 'gemini-3.1-flash-lite-preview', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+    : [
+        'gemini-3.8-flash',
+        'gemini-3.1-flash',
+        'gemini-3.1-flash-lite-preview',
+        'gemini-3-flash-preview',
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-1.5-flash',
+      ];
+  const models = Array.from(new Set(candidateModels));
   let lastError = '';
 
   for (const model of models) {
