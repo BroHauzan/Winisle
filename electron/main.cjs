@@ -43,11 +43,12 @@ app.commandLine.appendSwitch('disable-domain-reliability');
 app.commandLine.appendSwitch('disable-sync');
 app.commandLine.appendSwitch(
   'disable-features',
-  'Translate,CalculateNativeWinOcclusion,AutofillServerCommunication,SpareRendererForSitePerProcess,BackForwardCache,MediaRouter'
+  'IsolateOrigins,site-per-process,Translate,CalculateNativeWinOcclusion,AutofillServerCommunication,SpareRendererForSitePerProcess,BackForwardCache,MediaRouter'
 );
 app.commandLine.appendSwitch('enable-features', 'MemoryReducer');
 app.commandLine.appendSwitch('renderer-process-limit', '1');
 app.commandLine.appendSwitch('disable-site-isolation-trials');
+app.commandLine.appendSwitch('process-per-site');
 app.commandLine.appendSwitch('disable-background-networking');
 app.commandLine.appendSwitch('disable-gpu-memory-buffer-video-frames');
 app.commandLine.appendSwitch('disable-software-rasterizer');
@@ -440,6 +441,7 @@ function createOverlayWindow() {
     fullscreenable: false,
     hasShadow: false,
     backgroundColor: '#00000000',
+    title: 'WinIsle',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -450,6 +452,9 @@ function createOverlayWindow() {
       v8CacheOptions: 'none',
     },
   });
+
+  // Never allow iframe or web content to open external browser popup windows
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   // Keep overlay above taskbar and fullscreen windows ('screen-saver' level)
   mainWindow.setAlwaysOnTop(true, 'screen-saver');
@@ -547,8 +552,8 @@ app.whenReady().then(async () => {
   await ensureLocalBackendRunning();
   createOverlayWindow();
 
-  // Periodic idle memory trimming: flushes unreferenced buffers every 45s to ensure RAM remains strictly <100MB
-  setInterval(trimMemory, 45000);
+  // Periodic memory trimming: flushes unreferenced buffers every 16s to ensure RAM remains strictly <100MB even while streaming music
+  setInterval(trimMemory, 16000);
 
   // Register global Alt+Q shortcut so user can summon Isle Assistant even over fullscreen games/apps
   try {

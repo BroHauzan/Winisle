@@ -45,6 +45,7 @@ import {
 import { BotColorName, BotForm, BotShapeName, paletteFor } from './core/bot';
 import { parseLrc, SAMPLE_TRACKS } from './core/lrc';
 import { getWsBaseUrl } from './utils/apiBase';
+import { parseMusicQuery, hasDescriptiveKeywords } from './utils/musicQuery';
 
 type IslandPage = 'music' | 'notifications' | 'pomodoro' | 'todolist' | 'shelf' | 'calendar';
 
@@ -884,6 +885,14 @@ export default function App() {
     }
   }, [isExpanded]);
 
+  // Periodically invoke native memory trimmer every 18s even while music is actively playing or streaming audio
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      (window as any).electronAPI?.trimMemory?.();
+    }, 18000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   // Helper to safely add files to Shelf with Chaos Engineering guards (max 6 files, deduplication, sanitized names)
   const addFilesToShelf = useCallback(
     (incoming: { name: string; size: string; ext?: ShelfFileExt }[]) => {
@@ -1423,9 +1432,27 @@ export default function App() {
           ? trackInfo.durationMs
           : 210000;
 
+      let cleanTitle = trackInfo.title || 'Media';
+      let cleanArtist = trackInfo.artist || '';
+      if (hasDescriptiveKeywords(cleanTitle)) {
+        const parsed = parseMusicQuery(cleanTitle);
+        if (parsed.detectedArtist) {
+          cleanArtist = cleanArtist || parsed.detectedArtist;
+          cleanTitle = 'Top Hits';
+        } else {
+          cleanTitle =
+            cleanTitle
+              .replace(
+                /\b(?:yang populer|populer|terpopuler|terbaru|terbaik|hits?|lagu|musik|oleh|dari)\b/gi,
+                ''
+              )
+              .trim() || 'Music Track';
+        }
+      }
+
       const nextTrack: RealMediaTrack = {
-        title: trackInfo.title || 'Media',
-        artist: trackInfo.artist || '',
+        title: cleanTitle,
+        artist: cleanArtist,
         coverUrl: trackInfo.coverUrl || '',
         audioUrl: useHtmlAudio ? trackInfo.audioUrl : '',
         isFlac: Boolean(trackInfo.isFlac || flacEnabled),
@@ -1451,6 +1478,11 @@ export default function App() {
       setIsPlaying(true);
       lastPlayedSongQueryRef.current = (nextTrack.title || '').toLowerCase();
       lastPlayedSongTimeRef.current = Date.now();
+
+      // Trigger native working set trimmer 2.5s after audio starts to flush memory spikes
+      window.setTimeout(() => {
+        (window as any).electronAPI?.trimMemory?.();
+      }, 2500);
 
       if (audioElRef.current) {
         audioElRef.current.pause();
@@ -2593,21 +2625,22 @@ export default function App() {
       // 4. Music controls (Queue, Mood Shuffle, Play, Pause, Skip)
       const queueSongMatch =
         raw.match(
-          /\b(?:setelah ini|habis ini|habis lagu ini|abis ini|abis lagu ini|selanjutnya|nanti)\s+(?:tolong\s+)?(?:putar lagu|stel lagu|setel musik|setel lagu|mainkan lagu|putar musik|setel|putar|play|stel)\s+(.+)/i
+          /\b(?:setelah ini|habis ini|habis lagu ini|abis ini|abis lagu ini|selanjutnya|nanti)\s+(?:tolong\s+)?(?:putar lagu|puter lagu|puterin lagu|putarkan lagu|stel lagu|setel musik|setel lagu|mainkan lagu|putar musik|puter musik|setel|putar|puter|play|stel)\s+(.+)/i
         ) ||
         raw.match(
           /\b(?:masukin ke antrian|masukkan ke antrian|tambah ke antrian|tambahin ke antrian|antriin lagu|antrikan lagu|antri lagu|add to queue|queue song|queue track|play next)\s+(?:lagu\s+)?(.+)/i
         );
       if (queueSongMatch && queueSongMatch[1]) {
-        const songQuery = queueSongMatch[1].trim();
+        const rawSongQuery = queueSongMatch[1].trim();
+        const parsed = parseMusicQuery(rawSongQuery);
         const willPlayNow = !activeTrackRef.current;
-        handleQueueSongMedia(songQuery);
+        handleQueueSongMedia(parsed.searchQuery);
         navigateToPage(0);
         return {
           handled: true,
           reply: willPlayNow
-            ? `Karena belum ada lagu yang diputar, langsung memutar "${songQuery}" sekarang.`
-            : `Siap! Lagu "${songQuery}" sudah dimasukkan ke antrian dan akan otomatis diputar setelah lagu ini selesai.`,
+            ? `Karena belum ada lagu yang diputar, langsung memutar lagu "${parsed.displayName}" sekarang.`
+            : `Siap! Lagu "${parsed.displayName}" sudah dimasukkan ke antrian dan akan otomatis diputar setelah lagu ini selesai.`,
         };
       }
 
@@ -2665,13 +2698,17 @@ export default function App() {
       }
 
       const playSongMatch = raw.match(
-        /\b(?:putar lagu|stel lagu|setel musik|setel lagu|mainkan lagu|play song|play music|putar musik)\s+(.+)/i
+        /\b(?:putar lagu|puter lagu|puterin lagu|putarkan lagu|stel lagu|setel musik|setel lagu|mainkan lagu|play song|play music|putar musik|puter musik|puterin musik|putarkan musik)\s+(.+)/i
       );
       if (playSongMatch && playSongMatch[1]) {
-        const songQuery = playSongMatch[1].trim();
-        handleSearchAndPlayMedia(songQuery);
+        const rawSongQuery = playSongMatch[1].trim();
+        const parsed = parseMusicQuery(rawSongQuery);
+        handleSearchAndPlayMedia(parsed.searchQuery);
         navigateToPage(0);
-        return { handled: true, reply: `Mencari dan memutar "${songQuery}" di Dynamic Island.` };
+        const replyText = parsed.isDescriptive
+          ? `Mencari dan memutar lagu populer ${parsed.detectedArtist || parsed.displayName} di Dynamic Island.`
+          : `Mencari dan memutar "${parsed.displayName}" di Dynamic Island.`;
+        return { handled: true, reply: replyText };
       }
       if (/\b(jeda musik|pause musik|stop musik|pause lagu|hentikan musik)\b/.test(p)) {
         if (isPlaying) handleTogglePlay();

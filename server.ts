@@ -7,6 +7,7 @@ import { promisify } from 'util';
 import express, { Request, Response, NextFunction } from 'express';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { WebSocketServer, WebSocket } from 'ws';
+import { parseMusicQuery, hasDescriptiveKeywords } from './src/utils/musicQuery.ts';
 
 const currentDir =
   typeof __dirname !== 'undefined'
@@ -290,12 +291,13 @@ function inferIslandAction(prompt: string, explicitAction?: string, explicitPara
 
   // Queue song (e.g., "tolong setelah ini setel lagu X", "habis ini putar X", "masukin antrian lagu X", "play next X")
   const queueMatch = prompt.match(
-    /\b(?:setelah ini|habis ini|habis lagu ini|abis ini|abis lagu ini|selanjutnya|nanti)\s+(?:tolong\s+)?(?:putar lagu|stel lagu|setel musik|setel lagu|mainkan lagu|putar musik|setel|putar|play|stel)\s+(.+)/i
+    /\b(?:setelah ini|habis ini|habis lagu ini|abis ini|abis lagu ini|selanjutnya|nanti)\s+(?:tolong\s+)?(?:putar lagu|puter lagu|puterin lagu|putarkan lagu|stel lagu|setel musik|setel lagu|mainkan lagu|putar musik|puter musik|setel|putar|puter|play|stel)\s+(.+)/i
   ) || prompt.match(
     /\b(?:masukin ke antrian|masukkan ke antrian|tambah ke antrian|tambahin ke antrian|antriin lagu|antrikan lagu|antri lagu|add to queue|queue song|queue track|play next)\s+(?:lagu\s+)?(.+)/i
   );
   if (queueMatch && queueMatch[1]) {
-    return { action: 'queue_song', actionParam: queueMatch[1].trim() };
+    const parsed = parseMusicQuery(queueMatch[1].trim());
+    return { action: 'queue_song', actionParam: parsed.searchQuery };
   }
 
   if (/\b(hapus antrian|kosongkan antrian|bersihkan antrian|clear queue)\b/i.test(p)) {
@@ -318,10 +320,13 @@ function inferIslandAction(prompt: string, explicitAction?: string, explicitPara
     return { action: 'shuffle_on' };
   }
 
-  // Play specific song query
-  const songMatch = prompt.match(/\b(?:putar lagu|stel lagu|setel musik|setel lagu|mainkan lagu|play song|play music|putar musik)\s+(.+)/i);
+  // Play specific song query (handles "putar musik yang populer oleh alan walker", "setel faded", etc.)
+  const songMatch = prompt.match(
+    /\b(?:putar lagu|puter lagu|puterin lagu|putarkan lagu|stel lagu|setel musik|setel lagu|mainkan lagu|play song|play music|putar musik|puter musik|setel|putar|puter|play)\s+(.+)/i
+  );
   if (songMatch && songMatch[1]) {
-    return { action: 'play_song', actionParam: songMatch[1].trim() };
+    const parsed = parseMusicQuery(songMatch[1].trim());
+    return { action: 'play_song', actionParam: parsed.searchQuery };
   }
 
   // Volume & Brightness numeric control
@@ -1132,7 +1137,9 @@ async function resolveSongWithMultiSource(query: string, useFlac = false) {
   const cleanQ = sanitizeText(query, 120);
   if (!cleanQ) return null;
 
-  let title = cleanQ;
+  const parsed = parseMusicQuery(cleanQ);
+
+  let title = '';
   let artist = '';
   let coverUrl = '';
   let audioUrl = ''; // Only populated if optional lossless FLAC direct stream is enabled & resolved
@@ -1140,43 +1147,165 @@ async function resolveSongWithMultiSource(query: string, useFlac = false) {
   let durationMs = 210000; // default to 3.5m full song duration
   let youtubeVideoId = '';
 
-  // 1. Fetch iTunes metadata (limit=10 so we can filter out Live / Concert / Extended / Karaoke editions and pick the true Studio Track)
-  try {
-    const itRes = await withTimeout(
-      fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(cleanQ)}&media=music&entity=song&limit=10`),
-      4000,
-      'itunes-search'
-    );
-    if (itRes.ok) {
-      const itData: any = await itRes.json();
-      const results: any[] = Array.isArray(itData?.results) ? itData.results : [];
-      if (results.length > 0) {
-        const scoredResults = results.map((item, idx) => {
-          let score = 100 - idx * 4;
-          const combinedMeta = `${item.trackName || ''} ${item.collectionName || ''}`;
-          if (hasUnrequestedNonStudioKeyword(combinedMeta, cleanQ)) {
-            score -= 150;
+  // 1. If an artist was detected from descriptive phrases (e.g. "yang populer oleh alan walker" -> "Alan Walker"),
+  // query iTunes directly for that artist to get their real top hits (e.g. "Faded", "Alone", "Lily")!
+  if (parsed.detectedArtist) {
+    try {
+      const itArtistRes = await withTimeout(
+        fetch(
+          `https://itunes.apple.com/search?term=${encodeURIComponent(parsed.detectedArtist)}&media=music&entity=song&limit=15`
+        ),
+        4000,
+        'itunes-artist-search'
+      );
+      if (itArtistRes.ok) {
+        const itData: any = await itArtistRes.json();
+        const results: any[] = Array.isArray(itData?.results) ? itData.results : [];
+        if (results.length > 0) {
+          if (parsed.descriptiveType === 'latest') {
+            results.sort(
+              (a, b) => new Date(b.releaseDate || 0).getTime() - new Date(a.releaseDate || 0).getTime()
+            );
           }
-          // Prefer standard album tracks over singles/compilations with weird intros
-          if (typeof item.trackTimeMillis === 'number' && item.trackTimeMillis >= 90000 && item.trackTimeMillis <= 420000) {
-            score += 20;
-          }
-          return { item, score };
-        });
-        scoredResults.sort((a, b) => b.score - a.score);
-        const best = scoredResults[0].item;
-        if (best) {
-          title = best.trackName || title;
-          artist = best.artistName || '';
-          coverUrl = String(best.artworkUrl100 || '').replace('100x100bb', '600x600bb');
-          if (typeof best.trackTimeMillis === 'number' && best.trackTimeMillis > 45000) {
-            durationMs = best.trackTimeMillis;
+          const normArtist = parsed.detectedArtist.toLowerCase();
+          const match =
+            results.find((r) => r.artistName?.toLowerCase().includes(normArtist)) || results[0];
+          if (match && match.trackName) {
+            title = match.trackName;
+            artist = match.artistName || parsed.detectedArtist;
+            coverUrl = String(match.artworkUrl100 || '').replace('100x100bb', '600x600bb');
+            if (typeof match.trackTimeMillis === 'number' && match.trackTimeMillis > 45000) {
+              durationMs = match.trackTimeMillis;
+            }
           }
         }
       }
+    } catch {
+      // continue
     }
-  } catch {
-    // continue
+  }
+
+  // 2. Direct iTunes song search if title not yet resolved
+  if (!title) {
+    try {
+      const searchTarget = parsed.searchQuery || cleanQ;
+      const itRes = await withTimeout(
+        fetch(
+          `https://itunes.apple.com/search?term=${encodeURIComponent(searchTarget)}&media=music&entity=song&limit=10`
+        ),
+        4000,
+        'itunes-search'
+      );
+      if (itRes.ok) {
+        const itData: any = await itRes.json();
+        const results: any[] = Array.isArray(itData?.results) ? itData.results : [];
+        if (results.length > 0) {
+          const scoredResults = results.map((item, idx) => {
+            let score = 100 - idx * 4;
+            const combinedMeta = `${item.trackName || ''} ${item.collectionName || ''}`;
+            if (hasUnrequestedNonStudioKeyword(combinedMeta, searchTarget)) {
+              score -= 150;
+            }
+            if (
+              typeof item.trackTimeMillis === 'number' &&
+              item.trackTimeMillis >= 90000 &&
+              item.trackTimeMillis <= 420000
+            ) {
+              score += 20;
+            }
+            return { item, score };
+          });
+          scoredResults.sort((a, b) => b.score - a.score);
+          const best = scoredResults[0]?.item;
+          if (best && best.trackName) {
+            title = best.trackName;
+            artist = best.artistName || '';
+            coverUrl = String(best.artworkUrl100 || '').replace('100x100bb', '600x600bb');
+            if (typeof best.trackTimeMillis === 'number' && best.trackTimeMillis > 45000) {
+              durationMs = best.trackTimeMillis;
+            }
+          }
+        }
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  // 3. Fallback: Ask Gemini to resolve to a real song title and artist if title is still empty or looks descriptive
+  if (!title || hasDescriptiveKeywords(title)) {
+    const ai = getGeminiClient();
+    if (ai) {
+      for (const modelName of ['gemini-3.8-flash', 'gemini-3-flash-preview']) {
+        try {
+          const aiResp = await withTimeout(
+            ai.models.generateContent({
+              model: modelName,
+              contents: `What is the single most famous, popular official song for this music request: "${cleanQ}"?
+Reply ONLY in the exact format: Track Title - Artist Name
+Example: Faded - Alan Walker
+Do not include quotation marks or any conversational text.`,
+            }),
+            3000,
+            'gemini-song-resolve'
+          );
+          const resolved = aiResp.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (
+            resolved &&
+            resolved.includes('-') &&
+            !resolved.toLowerCase().includes('sorry') &&
+            !resolved.toLowerCase().includes('cannot')
+          ) {
+            const parts = resolved.split('-');
+            const resolvedTitle = parts[0]?.trim();
+            const resolvedArtist = parts.slice(1).join('-').trim();
+            if (resolvedTitle && resolvedArtist) {
+              title = resolvedTitle;
+              artist = resolvedArtist;
+
+              try {
+                const itResolved = await fetch(
+                  `https://itunes.apple.com/search?term=${encodeURIComponent(`${resolvedTitle} ${resolvedArtist}`)}&media=music&entity=song&limit=5`
+                );
+                if (itResolved.ok) {
+                  const itData: any = await itResolved.json();
+                  const first = itData?.results?.[0];
+                  if (first) {
+                    title = first.trackName || title;
+                    artist = first.artistName || artist;
+                    coverUrl = String(first.artworkUrl100 || '').replace('100x100bb', '600x600bb');
+                    if (typeof first.trackTimeMillis === 'number' && first.trackTimeMillis > 45000) {
+                      durationMs = first.trackTimeMillis;
+                    }
+                  }
+                }
+              } catch {}
+              break;
+            }
+          }
+        } catch {}
+      }
+    }
+  }
+
+  // 4. Absolute Guard: Never let title be raw user prompt phrases like "yang populer oleh alan walker"
+  if (!title || hasDescriptiveKeywords(title)) {
+    if (parsed.detectedArtist) {
+      title = 'Top Hits';
+      artist = parsed.detectedArtist;
+    } else {
+      title =
+        cleanQ
+          .replace(
+            /\b(?:yang populer|populer|terpopuler|terbaru|terbaik|hits?|lagu|musik|oleh|dari)\b/gi,
+            ''
+          )
+          .trim() || 'Music Track';
+      artist = artist || 'Popular Artist';
+    }
+  }
+  if (!artist) {
+    artist = parsed.detectedArtist || 'Various Artists';
   }
 
   const targetSec = Math.round(durationMs / 1000);
@@ -2329,8 +2458,8 @@ Valid action_name values:
 - wifi_on (turn on Wi-Fi)
 - find_files|search_keyword (search files on the computer/workspace)
 - open_terminal|command_to_run (open terminal or run system check like free -h, df -h, ls)
-- play_song|song_title_and_artist (play a specific song immediately and load synced lyrics)
-- queue_song|song_title_and_artist (when user asks to play a song AFTER the current song / add to queue / "setelah ini setel lagu...")
+- play_song|song_title_and_artist (play a specific song immediately, e.g. "Faded - Alan Walker"; when user asks with descriptive queries like "putar musik yang populer oleh alan walker", resolve it to an actual top hit like "Faded - Alan Walker", never output raw descriptive phrases)
+- queue_song|song_title_and_artist (queue a specific real song, e.g. "Alone - Alan Walker")
 - clear_queue (clear the music queue)
 - shuffle_on (enable smart mood-based auto-shuffle so songs with matching mood/style play automatically)
 - shuffle_off (disable smart mood-based auto-shuffle)
@@ -2621,7 +2750,7 @@ export async function startServer(customPort?: number) {
               },
               inputAudioTranscription: {},
               outputAudioTranscription: {},
-              systemInstruction: `You are the real-time Voice Assistant inside Isle (Windows Dynamic Island). Respond naturally, warmly, and concisely in ${lang}. Keep spoken answers brief and helpful for someone gaming or working on their PC.`,
+              systemInstruction: `You are the real-time Voice Assistant inside Isle (Windows Dynamic Island). Respond naturally, warmly, and concisely in ${lang}. If user asks to play music by description (e.g. "putar lagu populer Alan Walker"), name the specific famous song you are playing (e.g. "Memutar Faded oleh Alan Walker"). Keep spoken answers brief and helpful for someone gaming or working on their PC.`,
             },
             callbacks: {
               onopen: () => {

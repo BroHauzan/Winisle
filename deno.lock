@@ -19,6 +19,7 @@
     "npm:react@^19.3.1": "19.3.1",
     "npm:tailwindcss@^4.3.3": "4.3.3",
     "npm:tsx@^4.23.15": "4.23.15",
+    "npm:typescript@*": "7.0.2",
     "npm:typescript@^7.0.2": "7.0.2",
     "npm:vite@*": "8.3.5_esbuild@0.25.12_tsx@4.23.15",
     "npm:vite@^8.3.5": "8.3.5_esbuild@0.25.12_tsx@4.23.15",

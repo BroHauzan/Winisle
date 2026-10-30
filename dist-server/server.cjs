@@ -69812,6 +69812,114 @@ function getApiKeyFromEnv() {
   return envGoogleApiKey || envGeminiApiKey || void 0;
 }
 
+// src/utils/musicQuery.ts
+function hasDescriptiveKeywords(text) {
+  if (!text) return false;
+  return /\b(?:yang\s+populer|paling\s+populer|terpopuler|populer\s+oleh|populer\s+dari|terbaru\s+dari|terbaru\s+oleh|terbaik\s+dari|terbaik\s+oleh|lagu\s+hits|musik\s+hits|lagu\s+terpopuler|musik\s+terpopuler|lagu\s+populer|musik\s+populer|oleh\s+[a-zA-Z0-9_-]+|dari\s+[a-zA-Z0-9_-]+)\b/i.test(
+    text
+  );
+}
+function parseMusicQuery(raw) {
+  let q = (raw || "").trim();
+  q = q.replace(/^(?:tolong\s+)?(?:puterin|putarkan|putar|puter|setel|stel|mainkan|play)\s+/i, "");
+  q = q.replace(/^(?:lagu|musik|music|song|track)\s+/i, "");
+  q = q.trim();
+  let descriptiveType = "general";
+  if (/\b(?:populer|terpopuler|terkenal|viral|hits?|top|favorit|terfavorit)\b/i.test(q)) {
+    descriptiveType = "popular";
+  } else if (/\b(?:terbaru|latest|newest|baru)\b/i.test(q)) {
+    descriptiveType = "latest";
+  } else if (/\b(?:terbaik|best|greatest)\b/i.test(q)) {
+    descriptiveType = "best";
+  }
+  const formatName = (str) => str.trim().split(/\s+/).map((w) => w.length > 0 ? w[0].toUpperCase() + w.slice(1).toLowerCase() : "").join(" ");
+  let m2 = q.match(
+    /^(?:yang\s+)?(?:paling\s+)?(?:populer|terpopuler|terkenal|hits?|terbaik|terbaru|terfavorit|viral|favorit|enak|santai|top|best)\s+(?:dari|oleh|milik|ciptaan|nyanyian|punya|by|of)\s+(.+)/i
+  );
+  if (m2 && m2[1]) {
+    const rawArtist = m2[1].replace(/^(?:artis|penyanyi|band)\s+/i, "").trim();
+    const artist = formatName(rawArtist);
+    return {
+      searchQuery: artist,
+      detectedArtist: artist,
+      descriptiveType,
+      displayName: artist,
+      isDescriptive: true
+    };
+  }
+  m2 = q.match(
+    /^(?:dari|oleh|milik|ciptaan|by)\s+(.+?)\s+(?:yang\s+)?(?:paling\s+)?(?:populer|terpopuler|terkenal|hits?|terbaik|terbaru|terfavorit|viral|favorit|enak|santai|top|best)$/i
+  );
+  if (m2 && m2[1]) {
+    const rawArtist = m2[1].replace(/^(?:artis|penyanyi|band)\s+/i, "").trim();
+    const artist = formatName(rawArtist);
+    return {
+      searchQuery: artist,
+      detectedArtist: artist,
+      descriptiveType,
+      displayName: artist,
+      isDescriptive: true
+    };
+  }
+  m2 = q.match(
+    /^(.+?)\s+(?:yang\s+)?(?:paling\s+)?(?:populer|terpopuler|terkenal|hits?|terbaik|terbaru|terfavorit|viral|favorit|enak|santai|top|best)$/i
+  );
+  if (m2 && m2[1]) {
+    const rawArtist = m2[1].replace(/^(?:lagu|musik)\s+/i, "").trim();
+    if (!/^(?:yang|lagu|musik|apa)$/i.test(rawArtist)) {
+      const artist = formatName(rawArtist);
+      return {
+        searchQuery: artist,
+        detectedArtist: artist,
+        descriptiveType,
+        displayName: artist,
+        isDescriptive: true
+      };
+    }
+  }
+  m2 = q.match(/^(?:dari|oleh|milik|by)\s+(.+)/i);
+  if (m2 && m2[1]) {
+    const rawArtist = m2[1].replace(/^(?:artis|penyanyi|band)\s+/i, "").trim();
+    const artist = formatName(rawArtist);
+    return {
+      searchQuery: artist,
+      detectedArtist: artist,
+      descriptiveType,
+      displayName: artist,
+      isDescriptive: true
+    };
+  }
+  m2 = q.match(
+    /^(?:yang\s+)?(?:paling\s+)?(?:populer|terpopuler|terkenal|hits?|terbaik|terbaru|terfavorit|viral|favorit|enak|top|best)\s+(.+)/i
+  );
+  if (m2 && m2[1]) {
+    const rawArtist = m2[1].replace(/^(?:artis|penyanyi|band)\s+/i, "").trim();
+    const artist = formatName(rawArtist);
+    return {
+      searchQuery: artist,
+      detectedArtist: artist,
+      descriptiveType,
+      displayName: artist,
+      isDescriptive: true
+    };
+  }
+  if (/^(?:yang\s+)?(?:paling\s+)?(?:populer|terpopuler|terkenal|hits?|terbaik|terbaru|terfavorit|viral|favorit|enak|santai)$/i.test(
+    q
+  )) {
+    return {
+      searchQuery: "Top Hits Indonesia",
+      descriptiveType: "popular",
+      displayName: "Top Hits",
+      isDescriptive: true
+    };
+  }
+  return {
+    searchQuery: q,
+    displayName: q,
+    isDescriptive: false
+  };
+}
+
 // server.ts
 var import_meta = {};
 var currentDir = typeof __dirname !== "undefined" ? __dirname : typeof import_meta?.url === "string" ? import_path.default.dirname((0, import_url.fileURLToPath)(import_meta.url)) : process.cwd();
@@ -70013,12 +70121,13 @@ function inferIslandAction(prompt, explicitAction, explicitParam) {
     return { action: "open_terminal", actionParam: explicitParam || defaultCmd };
   }
   const queueMatch = prompt.match(
-    /\b(?:setelah ini|habis ini|habis lagu ini|abis ini|abis lagu ini|selanjutnya|nanti)\s+(?:tolong\s+)?(?:putar lagu|stel lagu|setel musik|setel lagu|mainkan lagu|putar musik|setel|putar|play|stel)\s+(.+)/i
+    /\b(?:setelah ini|habis ini|habis lagu ini|abis ini|abis lagu ini|selanjutnya|nanti)\s+(?:tolong\s+)?(?:putar lagu|puter lagu|puterin lagu|putarkan lagu|stel lagu|setel musik|setel lagu|mainkan lagu|putar musik|puter musik|setel|putar|puter|play|stel)\s+(.+)/i
   ) || prompt.match(
     /\b(?:masukin ke antrian|masukkan ke antrian|tambah ke antrian|tambahin ke antrian|antriin lagu|antrikan lagu|antri lagu|add to queue|queue song|queue track|play next)\s+(?:lagu\s+)?(.+)/i
   );
   if (queueMatch && queueMatch[1]) {
-    return { action: "queue_song", actionParam: queueMatch[1].trim() };
+    const parsed = parseMusicQuery(queueMatch[1].trim());
+    return { action: "queue_song", actionParam: parsed.searchQuery };
   }
   if (/\b(hapus antrian|kosongkan antrian|bersihkan antrian|clear queue)\b/i.test(p)) {
     return { action: "clear_queue" };
@@ -70033,9 +70142,12 @@ function inferIslandAction(prompt, explicitAction, explicitParam) {
   )) {
     return { action: "shuffle_on" };
   }
-  const songMatch = prompt.match(/\b(?:putar lagu|stel lagu|setel musik|setel lagu|mainkan lagu|play song|play music|putar musik)\s+(.+)/i);
+  const songMatch = prompt.match(
+    /\b(?:putar lagu|puter lagu|puterin lagu|putarkan lagu|stel lagu|setel musik|setel lagu|mainkan lagu|play song|play music|putar musik|puter musik|setel|putar|puter|play)\s+(.+)/i
+  );
   if (songMatch && songMatch[1]) {
-    return { action: "play_song", actionParam: songMatch[1].trim() };
+    const parsed = parseMusicQuery(songMatch[1].trim());
+    return { action: "play_song", actionParam: parsed.searchQuery };
   }
   const volNum = prompt.match(/\bvolume\b.*?(\d{1,3})/i);
   if (volNum) {
@@ -70611,47 +70723,151 @@ async function resolveMonochromeFlacStream(title, artist, targetSec = 0) {
 async function resolveSongWithMultiSource(query, useFlac = false) {
   const cleanQ = sanitizeText(query, 120);
   if (!cleanQ) return null;
-  let title = cleanQ;
+  const parsed = parseMusicQuery(cleanQ);
+  let title = "";
   let artist = "";
   let coverUrl = "";
   let audioUrl = "";
   let isFlac = false;
   let durationMs = 21e4;
   let youtubeVideoId = "";
-  try {
-    const itRes = await withTimeout(
-      fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(cleanQ)}&media=music&entity=song&limit=10`),
-      4e3,
-      "itunes-search"
-    );
-    if (itRes.ok) {
-      const itData = await itRes.json();
-      const results = Array.isArray(itData?.results) ? itData.results : [];
-      if (results.length > 0) {
-        const scoredResults = results.map((item, idx) => {
-          let score = 100 - idx * 4;
-          const combinedMeta = `${item.trackName || ""} ${item.collectionName || ""}`;
-          if (hasUnrequestedNonStudioKeyword(combinedMeta, cleanQ)) {
-            score -= 150;
+  if (parsed.detectedArtist) {
+    try {
+      const itArtistRes = await withTimeout(
+        fetch(
+          `https://itunes.apple.com/search?term=${encodeURIComponent(parsed.detectedArtist)}&media=music&entity=song&limit=15`
+        ),
+        4e3,
+        "itunes-artist-search"
+      );
+      if (itArtistRes.ok) {
+        const itData = await itArtistRes.json();
+        const results = Array.isArray(itData?.results) ? itData.results : [];
+        if (results.length > 0) {
+          if (parsed.descriptiveType === "latest") {
+            results.sort(
+              (a, b) => new Date(b.releaseDate || 0).getTime() - new Date(a.releaseDate || 0).getTime()
+            );
           }
-          if (typeof item.trackTimeMillis === "number" && item.trackTimeMillis >= 9e4 && item.trackTimeMillis <= 42e4) {
-            score += 20;
-          }
-          return { item, score };
-        });
-        scoredResults.sort((a, b) => b.score - a.score);
-        const best = scoredResults[0].item;
-        if (best) {
-          title = best.trackName || title;
-          artist = best.artistName || "";
-          coverUrl = String(best.artworkUrl100 || "").replace("100x100bb", "600x600bb");
-          if (typeof best.trackTimeMillis === "number" && best.trackTimeMillis > 45e3) {
-            durationMs = best.trackTimeMillis;
+          const normArtist = parsed.detectedArtist.toLowerCase();
+          const match2 = results.find((r2) => r2.artistName?.toLowerCase().includes(normArtist)) || results[0];
+          if (match2 && match2.trackName) {
+            title = match2.trackName;
+            artist = match2.artistName || parsed.detectedArtist;
+            coverUrl = String(match2.artworkUrl100 || "").replace("100x100bb", "600x600bb");
+            if (typeof match2.trackTimeMillis === "number" && match2.trackTimeMillis > 45e3) {
+              durationMs = match2.trackTimeMillis;
+            }
           }
         }
       }
+    } catch {
     }
-  } catch {
+  }
+  if (!title) {
+    try {
+      const searchTarget = parsed.searchQuery || cleanQ;
+      const itRes = await withTimeout(
+        fetch(
+          `https://itunes.apple.com/search?term=${encodeURIComponent(searchTarget)}&media=music&entity=song&limit=10`
+        ),
+        4e3,
+        "itunes-search"
+      );
+      if (itRes.ok) {
+        const itData = await itRes.json();
+        const results = Array.isArray(itData?.results) ? itData.results : [];
+        if (results.length > 0) {
+          const scoredResults = results.map((item, idx) => {
+            let score = 100 - idx * 4;
+            const combinedMeta = `${item.trackName || ""} ${item.collectionName || ""}`;
+            if (hasUnrequestedNonStudioKeyword(combinedMeta, searchTarget)) {
+              score -= 150;
+            }
+            if (typeof item.trackTimeMillis === "number" && item.trackTimeMillis >= 9e4 && item.trackTimeMillis <= 42e4) {
+              score += 20;
+            }
+            return { item, score };
+          });
+          scoredResults.sort((a, b) => b.score - a.score);
+          const best = scoredResults[0]?.item;
+          if (best && best.trackName) {
+            title = best.trackName;
+            artist = best.artistName || "";
+            coverUrl = String(best.artworkUrl100 || "").replace("100x100bb", "600x600bb");
+            if (typeof best.trackTimeMillis === "number" && best.trackTimeMillis > 45e3) {
+              durationMs = best.trackTimeMillis;
+            }
+          }
+        }
+      }
+    } catch {
+    }
+  }
+  if (!title || hasDescriptiveKeywords(title)) {
+    const ai = getGeminiClient();
+    if (ai) {
+      for (const modelName of ["gemini-3.8-flash", "gemini-3-flash-preview"]) {
+        try {
+          const aiResp = await withTimeout(
+            ai.models.generateContent({
+              model: modelName,
+              contents: `What is the single most famous, popular official song for this music request: "${cleanQ}"?
+Reply ONLY in the exact format: Track Title - Artist Name
+Example: Faded - Alan Walker
+Do not include quotation marks or any conversational text.`
+            }),
+            3e3,
+            "gemini-song-resolve"
+          );
+          const resolved = aiResp.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (resolved && resolved.includes("-") && !resolved.toLowerCase().includes("sorry") && !resolved.toLowerCase().includes("cannot")) {
+            const parts = resolved.split("-");
+            const resolvedTitle = parts[0]?.trim();
+            const resolvedArtist = parts.slice(1).join("-").trim();
+            if (resolvedTitle && resolvedArtist) {
+              title = resolvedTitle;
+              artist = resolvedArtist;
+              try {
+                const itResolved = await fetch(
+                  `https://itunes.apple.com/search?term=${encodeURIComponent(`${resolvedTitle} ${resolvedArtist}`)}&media=music&entity=song&limit=5`
+                );
+                if (itResolved.ok) {
+                  const itData = await itResolved.json();
+                  const first = itData?.results?.[0];
+                  if (first) {
+                    title = first.trackName || title;
+                    artist = first.artistName || artist;
+                    coverUrl = String(first.artworkUrl100 || "").replace("100x100bb", "600x600bb");
+                    if (typeof first.trackTimeMillis === "number" && first.trackTimeMillis > 45e3) {
+                      durationMs = first.trackTimeMillis;
+                    }
+                  }
+                }
+              } catch {
+              }
+              break;
+            }
+          }
+        } catch {
+        }
+      }
+    }
+  }
+  if (!title || hasDescriptiveKeywords(title)) {
+    if (parsed.detectedArtist) {
+      title = "Top Hits";
+      artist = parsed.detectedArtist;
+    } else {
+      title = cleanQ.replace(
+        /\b(?:yang populer|populer|terpopuler|terbaru|terbaik|hits?|lagu|musik|oleh|dari)\b/gi,
+        ""
+      ).trim() || "Music Track";
+      artist = artist || "Popular Artist";
+    }
+  }
+  if (!artist) {
+    artist = parsed.detectedArtist || "Various Artists";
   }
   const targetSec = Math.round(durationMs / 1e3);
   if (useFlac) {
@@ -71613,8 +71829,8 @@ Valid action_name values:
 - wifi_on (turn on Wi-Fi)
 - find_files|search_keyword (search files on the computer/workspace)
 - open_terminal|command_to_run (open terminal or run system check like free -h, df -h, ls)
-- play_song|song_title_and_artist (play a specific song immediately and load synced lyrics)
-- queue_song|song_title_and_artist (when user asks to play a song AFTER the current song / add to queue / "setelah ini setel lagu...")
+- play_song|song_title_and_artist (play a specific song immediately, e.g. "Faded - Alan Walker"; when user asks with descriptive queries like "putar musik yang populer oleh alan walker", resolve it to an actual top hit like "Faded - Alan Walker", never output raw descriptive phrases)
+- queue_song|song_title_and_artist (queue a specific real song, e.g. "Alone - Alan Walker")
 - clear_queue (clear the music queue)
 - shuffle_on (enable smart mood-based auto-shuffle so songs with matching mood/style play automatically)
 - shuffle_off (disable smart mood-based auto-shuffle)
@@ -71877,7 +72093,7 @@ async function startServer(customPort) {
               },
               inputAudioTranscription: {},
               outputAudioTranscription: {},
-              systemInstruction: `You are the real-time Voice Assistant inside Isle (Windows Dynamic Island). Respond naturally, warmly, and concisely in ${lang}. Keep spoken answers brief and helpful for someone gaming or working on their PC.`
+              systemInstruction: `You are the real-time Voice Assistant inside Isle (Windows Dynamic Island). Respond naturally, warmly, and concisely in ${lang}. If user asks to play music by description (e.g. "putar lagu populer Alan Walker"), name the specific famous song you are playing (e.g. "Memutar Faded oleh Alan Walker"). Keep spoken answers brief and helpful for someone gaming or working on their PC.`
             },
             callbacks: {
               onopen: () => {
