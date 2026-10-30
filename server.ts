@@ -1834,11 +1834,12 @@ if ($null -ne $session) {
       // Fallback to window title inspection below
     }
 
-    // 2. Fallback: Check process MainWindowTitle (Spotify / YouTube Music / Apple Music / VLC)
+    // 2. Fallback: Check process MainWindowTitle for dedicated desktop players only (Spotify / VLC)
+    // Never match Chrome/Edge by window title because browser tabs contain arbitrary text like "GitHub - Pull Request - Google Chrome"
     if (!detectedTitle) {
       const { stdout } = await withTimeout(
         execAsync(
-          'powershell -NoProfile -Command "Get-Process | Where-Object { $_.ProcessName -match \'Spotify|Music|vlc|chrome|msedge\' -and $_.MainWindowTitle -match \' - \' } | Select-Object -First 1 -Property ProcessName, MainWindowTitle | ConvertTo-Json -Compress"'
+          'powershell -NoProfile -Command "Get-Process | Where-Object { $_.ProcessName -match \'^(Spotify|vlc)$\' -and $_.MainWindowTitle -match \' - \' -and $_.MainWindowTitle -notmatch \'^(Spotify|Spotify Free|Spotify Premium)$\' } | Select-Object -First 1 -Property ProcessName, MainWindowTitle | ConvertTo-Json -Compress"'
         ),
         2200,
         'win-media-detect'
@@ -1850,12 +1851,10 @@ if ($null -ne $session) {
         return res.json({ playing: false, shuffleActive: externalOsShuffleState });
       }
       if (procName.includes('spotify')) sourceApp = 'Spotify';
-      else if (winTitle.toLowerCase().includes('youtube music')) sourceApp = 'YouTube Music';
-      else if (procName.includes('music')) sourceApp = 'Apple Music';
       else if (procName.includes('vlc')) sourceApp = 'VLC';
 
       const cleanTitle = winTitle
-        .replace(/\s*-\s*(Spotify|YouTube Music|YouTube|Google Chrome|Microsoft Edge|VLC media player).*$/i, '')
+        .replace(/\s*-\s*(Spotify|VLC media player).*$/i, '')
         .trim();
       const parts = cleanTitle.split(' - ');
       if (parts.length >= 2) {

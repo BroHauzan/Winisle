@@ -866,6 +866,7 @@ export default function App() {
   const [shelfToast, setShelfToast] = useState<string | null>(null);
   const lastDropTimeRef = useRef<number>(0);
   const dragLeaveTimerRef = useRef<number | null>(null);
+  const autoCollapseTimerRef = useRef<number | null>(null);
 
   const [lyricsMode, setLyricsMode] = useState(false);
   const activePage = ISLAND_PAGES[pageIndex].id;
@@ -1821,6 +1822,11 @@ export default function App() {
           setPositionMs(data.positionMs);
         }
         setIsPlaying(!data.isPaused);
+      } else if (!data?.playing && curr?.sourceType === 'external') {
+        // External media stopped / closed: reset playback state so Dynamic Island is not stuck on music
+        setIsPlaying(false);
+        activeTrackRef.current = null;
+        setActiveTrack(null);
       }
     } catch {
       // ignore
@@ -5599,6 +5605,10 @@ export default function App() {
           voiceLevelRef={voiceEnergyRef}
           nudgeTrigger={nudgeCount}
           onMouseEnter={() => {
+            if (autoCollapseTimerRef.current) {
+              window.clearTimeout(autoCollapseTimerRef.current);
+              autoCollapseTimerRef.current = null;
+            }
             setDesktopClickThrough(false);
             if (activeAlert) {
               setAlertHovered(true);
@@ -5611,8 +5621,8 @@ export default function App() {
             if (activeAlert) {
               setAlertHovered(false);
             } else {
-              if (lyricsMode) {
-                // Keep Island open while in lyrics view per user requirement
+              if (lyricsMode || assistantOpen) {
+                // Keep Island open while in lyrics view or typing with AI
                 return;
               }
               setIsHovered(false);
@@ -5620,6 +5630,15 @@ export default function App() {
               if (dragAutoOpened) {
                 setDragAutoOpened(false);
               }
+              // Auto-collapse after 3.5s of no mouse interaction
+              if (autoCollapseTimerRef.current) {
+                window.clearTimeout(autoCollapseTimerRef.current);
+              }
+              autoCollapseTimerRef.current = window.setTimeout(() => {
+                setIsPinnedOpen(false);
+                setIsHovered(false);
+                setDragAutoOpened(false);
+              }, 3500);
             }
           }}
           onClick={(e) => {
@@ -5636,7 +5655,17 @@ export default function App() {
               }
               return;
             }
-            if (!isPinnedOpen) setIsPinnedOpen(true);
+            const isClickingControl = (e.target as HTMLElement | null)?.closest(
+              'button, input, textarea, a, select, [role="button"], [role="slider"]'
+            );
+            if (isClickingControl) return;
+
+            if (autoCollapseTimerRef.current) {
+              window.clearTimeout(autoCollapseTimerRef.current);
+              autoCollapseTimerRef.current = null;
+            }
+            // Toggle open / close when clicking on notch or empty header surface
+            setIsPinnedOpen((prev) => !prev);
           }}
           onContextMenu={(e) => {
             e.preventDefault();
