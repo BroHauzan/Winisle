@@ -57,8 +57,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         continue-on-error: true
         with:
-          tag_name: ${{ github.ref_name || inputs.tag_name || 'v1.1.0' }}
-          name: WinIsle ${{ github.ref_name || inputs.tag_name || 'v1.1.0' }}
+          tag_name: ${{ (startsWith(github.ref, 'refs/tags/') && github.ref_name) || inputs.tag_name || 'v1.1.0' }}
+          name: WinIsle ${{ (startsWith(github.ref, 'refs/tags/') && github.ref_name) || inputs.tag_name || 'v1.1.0' }}
           target_commitish: ${{ github.sha }}
           draft: false
           prerelease: false
