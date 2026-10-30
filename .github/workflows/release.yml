@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Versi Release Tag (contoh: v1.0.0)'
+        description: 'Versi Release Tag (contoh: v1.1.0)'
         required: false
-        default: 'v1.0.0'
+        default: 'v1.1.0'
 
 permissions:
   contents: write
@@ -30,34 +30,15 @@ jobs:
           node-version: '22'
 
       - name: Install dependencies
-        run: npm install --legacy-peer-deps --include=dev
+        run: npm install --legacy-peer-deps
 
-      - name: Build Web App (Vite)
-        run: npm run build
-
-      - name: Verify Web Dist
-        shell: pwsh
+      - name: Build Web App & Server
         run: |
-          if (-not (Test-Path "dist/index.html")) {
-            Write-Error "CRITICAL: dist/index.html does not exist! Vite build failed."
-            exit 1
-          }
-          Write-Host "Vite build verified! dist/index.html exists."
-
-      - name: Build Desktop Server
-        run: node scripts/generate-tray-icon.mjs && node scripts/build-server.mjs
-
-      - name: Verify Server Dist
-        shell: pwsh
-        run: |
-          if (-not (Test-Path "dist-server/server.cjs")) {
-            Write-Error "CRITICAL: dist-server/server.cjs does not exist!"
-            exit 1
-          }
-          Write-Host "Server build verified! dist-server/server.cjs exists."
+          npm run build
+          npm run build:server
 
       - name: Build WinIsleSetup.exe via Electron Builder
-        run: npx --yes electron-builder --win nsis --x64 --publish never
+        run: npx electron-builder --win nsis --x64 --publish never
 
       - name: Package WinIsleSetup.zip
         run: node scripts/package-release-zip.mjs
@@ -76,14 +57,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         continue-on-error: true
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag_name || 'v1.1.0' }}
-          name: WinIsle ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag_name || 'v1.1.0' }}
+          tag_name: ${{ github.ref_name || inputs.tag_name || 'v1.1.0' }}
+          name: WinIsle ${{ github.ref_name || inputs.tag_name || 'v1.1.0' }}
           target_commitish: ${{ github.sha }}
           draft: false
           prerelease: false
           body: |
-            ## WinIsle Dynamic Island for Windows
-            Unduh **`WinIsleSetup.zip`** di bawah ini, ekstrak, lalu jalankan **`WinIsleSetup.exe`** untuk menginstal Dynamic Island di Windows Anda (tanpa perlu mendownload source code).
+            ## WinIsle Dynamic Island for Windows v1.1.0
+            Unduh **`WinIsleSetup.exe`** atau **`WinIsleSetup.zip`** di bawah ini untuk menginstal Dynamic Island terbaru di Windows (teroptimasi RAM ~40MB & bebas bilah putih).
           files: |
             release/*.zip
             release/*.exe
