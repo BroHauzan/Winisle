@@ -39,6 +39,26 @@ if (process.platform === 'win32') {
       console.warn('Could not compile trim-mem.exe:', e.message);
     }
   }
+
+  const helperCs = path.join(rootDir, 'electron', 'hardware-helper.cs');
+  const helperExe = path.join(rootDir, 'electron', 'hardware-helper.exe');
+  if (cscPath && fs.existsSync(helperCs)) {
+    try {
+      const res = spawnSync(cscPath, [
+        '/nologo',
+        '/optimize',
+        '/target:exe',
+        '/r:System.Management.dll',
+        `/out:${helperExe}`,
+        helperCs,
+      ]);
+      if (res.status === 0) {
+        console.log('Successfully compiled electron/hardware-helper.exe');
+      }
+    } catch (e) {
+      console.warn('Could not compile hardware-helper.exe:', e.message);
+    }
+  }
 }
 
 await build({

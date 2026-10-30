@@ -634,56 +634,6 @@ export default function App() {
   const lastLocalHardwareChangeRef = useRef<number>(0);
   const osHardwareAvailableRef = useRef<boolean>(false);
 
-  const syncHardwareToOs = useCallback(
-    (nextPatch: { volume?: number; muted?: boolean; brightness?: number }) => {
-      lastLocalHardwareChangeRef.current = Date.now();
-      try {
-        const winAny = window as any;
-        if (typeof winAny.electronAPI?.setHardwareStatus === 'function') {
-          winAny.electronAPI.setHardwareStatus(nextPatch);
-        } else if (typeof winAny.chrome?.webview?.postMessage === 'function') {
-          winAny.chrome.webview.postMessage({ type: 'hardwareControl', ...nextPatch });
-        }
-      } catch {
-        // ignore
-      }
-      if (osHardwareAvailableRef.current) {
-        fetch('/api/system/hardware-control', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(nextPatch),
-        }).catch(() => {});
-      }
-    },
-    []
-  );
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem('isle_user_volume', String(volume));
-    } catch {
-      // ignore
-    }
-    syncHardwareToOs({ volume, muted });
-  }, [volume, muted, syncHardwareToOs]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem('isle_user_muted', String(muted));
-    } catch {
-      // ignore
-    }
-  }, [muted]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem('isle_user_brightness', String(brightness));
-    } catch {
-      // ignore
-    }
-    syncHardwareToOs({ brightness });
-  }, [brightness, syncHardwareToOs]);
-
   const triggerAlert = useCallback(
     (
       type: SystemAlertType,
@@ -734,13 +684,151 @@ export default function App() {
     []
   );
 
-  // Real Windows / System Hardware Status Detection (Volume, Brightness, Battery Level & Charging)
+  const pendingHardwareChangesRef = useRef<{ volume?: number; muted?: boolean; brightness?: number }>({});
+  const hardwareDebounceTimerRef = useRef<number | null>(null);
+
+  const flushHardwareControl = useCallback(() => {
+    if (hardwareDebounceTimerRef.current) {
+      window.clearTimeout(hardwareDebounceTimerRef.current);
+      hardwareDebounceTimerRef.current = null;
+    }
+    const patch = { ...pendingHardwareChangesRef.current };
+    pendingHardwareChangesRef.current = {};
+    if (Object.keys(patch).length === 0) return;
+
+    lastLocalHardwareChangeRef.current = Date.now();
+    try {
+      const winAny = window as any;
+      if (typeof winAny.electronAPI?.setHardwareStatus === 'function') {
+        winAny.electronAPI.setHardwareStatus(patch);
+      } else if (typeof winAny.chrome?.webview?.postMessage === 'function') {
+        winAny.chrome.webview.postMessage({ type: 'hardwareControl', ...patch });
+      }
+    } catch {}
+
+    fetch('/api/system/hardware-control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }).catch(() => {});
+  }, []);
+
+  const queueHardwareControl = useCallback(
+    (patch: { volume?: number; muted?: boolean; brightness?: number }) => {
+      Object.assign(pendingHardwareChangesRef.current, patch);
+      lastLocalHardwareChangeRef.current = Date.now();
+      if (hardwareDebounceTimerRef.current) {
+        window.clearTimeout(hardwareDebounceTimerRef.current);
+      }
+      // 40ms debounce to collapse high-frequency mouse-wheel / rapid-keypress spikes into single OS hardware calls
+      hardwareDebounceTimerRef.current = window.setTimeout(flushHardwareControl, 40);
+    },
+    [flushHardwareControl]
+  );
+
+  const changeUserVolume = useCallback(
+    (nextVol: number, nextMuted?: boolean) => {
+      const clamped = Math.max(0, Math.min(100, Math.round(nextVol)));
+      const m = nextMuted !== undefined ? nextMuted : clamped === 0;
+      setVolume(clamped);
+      setMuted(m);
+      try {
+        window.localStorage.setItem('isle_user_volume', String(clamped));
+        window.localStorage.setItem('isle_user_muted', String(m));
+      } catch {}
+      triggerAlert('volume', { value: clamped, muted: m });
+      queueHardwareControl({ volume: clamped, muted: m });
+    },
+    [queueHardwareControl, triggerAlert]
+  );
+
+  const changeUserMute = useCallback(
+    (nextMuted: boolean) => {
+      setMuted(nextMuted);
+      try {
+        window.localStorage.setItem('isle_user_muted', String(nextMuted));
+      } catch {}
+      triggerAlert('mute', { value: nextMuted ? 0 : volume, muted: nextMuted });
+      queueHardwareControl({ muted: nextMuted });
+    },
+    [volume, queueHardwareControl, triggerAlert]
+  );
+
+  const changeUserBrightness = useCallback(
+    (nextBri: number) => {
+      const clamped = Math.max(0, Math.min(10, Math.round(nextBri)));
+      setBrightness(clamped);
+      try {
+        window.localStorage.setItem('isle_user_brightness', String(clamped));
+      } catch {}
+      triggerAlert('brightness', { value: clamped });
+      queueHardwareControl({ brightness: clamped });
+    },
+    [queueHardwareControl, triggerAlert]
+  );
+
+  // 1. Real-time Hardware Event Stream (SSE from fast CoreAudio/Daemon helper)
   useEffect(() => {
-    // 1. Poll system hardware status from backend OS probe (syncs Windows Master Volume when running on Windows)
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource('/api/system/hardware-stream');
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data && data.type === 'osHardwareStatus') {
+            osHardwareAvailableRef.current = true;
+            // Ignore if user adjusted locally within last 1200ms to avoid feedback jitter
+            if (Date.now() - lastLocalHardwareChangeRef.current < 1200) return;
+            if (typeof data.batteryLevel === 'number') {
+              setBatteryLevel((prev) => (prev !== data.batteryLevel ? data.batteryLevel : prev));
+            }
+            if (typeof data.isCharging === 'boolean') {
+              setIsCharging((prev) => (prev !== data.isCharging ? data.isCharging : prev));
+            }
+            if (typeof data.volume === 'number') {
+              setVolume((prev) => {
+                if (prev !== data.volume) {
+                  try { window.localStorage.setItem('isle_user_volume', String(data.volume)); } catch {}
+                  // If volume changed externally, pop up the Volume HUD alert
+                  triggerAlert('volume', { value: data.volume, muted: data.muted });
+                  return data.volume;
+                }
+                return prev;
+              });
+            }
+            if (typeof data.muted === 'boolean') {
+              setMuted((prev) => {
+                if (prev !== data.muted) {
+                  try { window.localStorage.setItem('isle_user_muted', String(data.muted)); } catch {}
+                  return data.muted;
+                }
+                return prev;
+              });
+            }
+            if (typeof data.brightness === 'number') {
+              setBrightness((prev) => {
+                if (prev !== data.brightness) {
+                  try { window.localStorage.setItem('isle_user_brightness', String(data.brightness)); } catch {}
+                  return data.brightness;
+                }
+                return prev;
+              });
+            }
+          }
+        } catch {}
+      };
+    } catch {}
+
+    return () => {
+      if (es) es.close();
+    };
+  }, [triggerAlert]);
+
+  // 2. Hardware Status Polling (Syncs battery, brightness & master volume accurately without feedback loop)
+  useEffect(() => {
     let pollId = 0;
     const fetchOsHardware = () => {
-      // Avoid overwriting right while user is actively scrolling volume/brightness
-      if (Date.now() - lastLocalHardwareChangeRef.current < 2200) return;
+      if (Date.now() - lastLocalHardwareChangeRef.current < 1200) return;
       fetch('/api/system/hardware-status')
         .then((r) => r.json())
         .then((data) => {
@@ -753,13 +841,31 @@ export default function App() {
               setIsCharging((prev) => (prev !== data.isCharging ? data.isCharging : prev));
             }
             if (typeof data.volume === 'number') {
-              setVolume((prev) => (prev !== data.volume ? data.volume : prev));
+              setVolume((prev) => {
+                if (prev !== data.volume) {
+                  try { window.localStorage.setItem('isle_user_volume', String(data.volume)); } catch {}
+                  return data.volume;
+                }
+                return prev;
+              });
             }
             if (typeof data.muted === 'boolean') {
-              setMuted((prev) => (prev !== data.muted ? data.muted : prev));
+              setMuted((prev) => {
+                if (prev !== data.muted) {
+                  try { window.localStorage.setItem('isle_user_muted', String(data.muted)); } catch {}
+                  return data.muted;
+                }
+                return prev;
+              });
             }
             if (typeof data.brightness === 'number') {
-              setBrightness((prev) => (prev !== data.brightness ? data.brightness : prev));
+              setBrightness((prev) => {
+                if (prev !== data.brightness) {
+                  try { window.localStorage.setItem('isle_user_brightness', String(data.brightness)); } catch {}
+                  return data.brightness;
+                }
+                return prev;
+              });
             }
           }
         })
@@ -767,9 +873,8 @@ export default function App() {
     };
 
     fetchOsHardware();
-    // Dynamic polling rate: 4s when active, 12s when hidden/backgrounded to preserve CPU
     const scheduleNextPoll = () => {
-      const interval = document.hidden ? 12000 : 4000;
+      const interval = document.hidden ? 8000 : 2500;
       pollId = window.setTimeout(() => {
         fetchOsHardware();
         scheduleNextPoll();
@@ -777,13 +882,22 @@ export default function App() {
     };
     scheduleNextPoll();
 
-    // Listen to native desktop wrapper hardware events (Electron / WebView2) if present
     const onNativeHardwareMsg = (ev: MessageEvent) => {
       const payload = ev.data;
       if (payload && typeof payload === 'object' && payload.type === 'osHardwareStatus') {
-        if (typeof payload.volume === 'number') setVolume(payload.volume);
-        if (typeof payload.muted === 'boolean') setMuted(payload.muted);
-        if (typeof payload.brightness === 'number') setBrightness(payload.brightness);
+        if (Date.now() - lastLocalHardwareChangeRef.current < 1200) return;
+        if (typeof payload.volume === 'number') {
+          setVolume(payload.volume);
+          try { window.localStorage.setItem('isle_user_volume', String(payload.volume)); } catch {}
+        }
+        if (typeof payload.muted === 'boolean') {
+          setMuted(payload.muted);
+          try { window.localStorage.setItem('isle_user_muted', String(payload.muted)); } catch {}
+        }
+        if (typeof payload.brightness === 'number') {
+          setBrightness(payload.brightness);
+          try { window.localStorage.setItem('isle_user_brightness', String(payload.brightness)); } catch {}
+        }
       }
     };
     window.addEventListener('message', onNativeHardwareMsg);
@@ -2550,11 +2664,7 @@ export default function App() {
           p
         )
       ) {
-        setBrightness((curr) => {
-          const next = Math.min(10, curr + 2);
-          triggerAlert('brightness', { value: next });
-          return next;
-        });
+        changeUserBrightness(Math.min(10, brightness + 2));
         return { handled: true, reply: 'Kecerahan layar telah dinaikkan.' };
       }
       if (
@@ -2562,19 +2672,14 @@ export default function App() {
           p
         )
       ) {
-        setBrightness((curr) => {
-          const next = Math.max(1, curr - 2);
-          triggerAlert('brightness', { value: next });
-          return next;
-        });
+        changeUserBrightness(Math.max(1, brightness - 2));
         return { handled: true, reply: 'Kecerahan layar telah diturunkan.' };
       }
       const briNumMatch = p.match(/\b(?:brightness|kecerahan)\b.*?(\d{1,3})/);
       if (briNumMatch) {
         const rawNum = parseInt(briNumMatch[1], 10);
         const val = Math.min(10, Math.max(1, rawNum > 10 ? Math.round(rawNum / 10) : rawNum));
-        setBrightness(val);
-        triggerAlert('brightness', { value: val });
+        changeUserBrightness(val);
         return { handled: true, reply: `Kecerahan diatur ke tingkat ${val}.` };
       }
 
@@ -2584,12 +2689,7 @@ export default function App() {
           p
         )
       ) {
-        setMuted(false);
-        setVolume((curr) => {
-          const next = Math.min(100, curr + 15);
-          triggerAlert('volume', { value: next });
-          return next;
-        });
+        changeUserVolume(Math.min(100, volume + 15), false);
         return { handled: true, reply: 'Volume dinaikkan.' };
       }
       if (
@@ -2597,29 +2697,22 @@ export default function App() {
           p
         )
       ) {
-        setVolume((curr) => {
-          const next = Math.max(0, curr - 15);
-          triggerAlert('volume', { value: next });
-          return next;
-        });
+        const next = Math.max(0, volume - 15);
+        changeUserVolume(next, next === 0);
         return { handled: true, reply: 'Volume diturunkan.' };
       }
       if (/\b(mute|bisukan|senyapkan|matikan suara)\b/.test(p)) {
-        setMuted(true);
-        triggerAlert('mute', { muted: true });
+        changeUserMute(true);
         return { handled: true, reply: 'Volume dibisukan (Muted).' };
       }
       if (/\b(unmute|bunyikan|nyalakan suara|suara on)\b/.test(p)) {
-        setMuted(false);
-        triggerAlert('volume', { value: volume });
+        changeUserMute(false);
         return { handled: true, reply: 'Suara dinyalakan kembali.' };
       }
       const volNumMatch = p.match(/\bvolume\b.*?(\d{1,3})/);
       if (volNumMatch) {
         const v = Math.min(100, Math.max(0, parseInt(volNumMatch[1], 10)));
-        setMuted(v === 0);
-        setVolume(v);
-        triggerAlert('volume', { value: v });
+        changeUserVolume(v, v === 0);
         return { handled: true, reply: `Volume diatur ke ${v}%.` };
       }
 
@@ -3447,11 +3540,10 @@ export default function App() {
         pushRealNotification('Wi-Fi Diaktifkan', 'Adaptor Wi-Fi terhubung.', 'message');
       } else if (data.action === 'set_volume' && data.actionParam) {
         const v = Math.min(100, Math.max(0, Number(data.actionParam) || 50));
-        setMuted(v === 0);
-        setVolume(v);
+        changeUserVolume(v, v === 0);
       } else if (data.action === 'set_brightness' && data.actionParam) {
         const b = Math.min(10, Math.max(0, Number(data.actionParam) || 7));
-        setBrightness(b);
+        changeUserBrightness(b);
       } else if (data.action === 'play_music') {
         if (activeTrack) {
           audioElRef.current?.play().catch(() => {});
@@ -3466,12 +3558,11 @@ export default function App() {
       } else if (data.action === 'prev_track') {
         handlePrevTrack();
       } else if (data.action === 'set_volume_30') {
-        setMuted(false);
-        setVolume(30);
+        changeUserVolume(30, false);
       } else if (data.action === 'mute_volume') {
-        setMuted(true);
+        changeUserMute(true);
       } else if (data.action === 'unmute_volume') {
-        setMuted(false);
+        changeUserMute(false);
       } else if (data.action === 'toggle_lyrics') {
         navigateToPage(0);
         setLyricsMode(true);
@@ -3511,30 +3602,14 @@ export default function App() {
       } else if (data.action === 'set_alarm_and_reminder' && data.actionParam) {
         executeIslandCommand(data.actionParam);
       } else if (data.action === 'volume_up') {
-        setMuted(false);
-        setVolume((curr) => {
-          const next = Math.min(100, curr + 15);
-          triggerAlert('volume', { value: next });
-          return next;
-        });
+        changeUserVolume(Math.min(100, volume + 15), false);
       } else if (data.action === 'volume_down') {
-        setVolume((curr) => {
-          const next = Math.max(0, curr - 15);
-          triggerAlert('volume', { value: next });
-          return next;
-        });
+        const next = Math.max(0, volume - 15);
+        changeUserVolume(next, next === 0);
       } else if (data.action === 'brightness_up') {
-        setBrightness((curr) => {
-          const next = Math.min(10, curr + 2);
-          triggerAlert('brightness', { value: next });
-          return next;
-        });
+        changeUserBrightness(Math.min(10, brightness + 2));
       } else if (data.action === 'brightness_down') {
-        setBrightness((curr) => {
-          const next = Math.max(1, curr - 2);
-          triggerAlert('brightness', { value: next });
-          return next;
-        });
+        changeUserBrightness(Math.max(1, brightness - 2));
       }
     } catch (err: any) {
       if (err?.name === 'AbortError') {
@@ -3915,35 +3990,24 @@ export default function App() {
       if (e.key === 'AudioVolumeMute' || (!inInput && !assistantOpen && e.key.toLowerCase() === 'm')) {
         if (e.repeat) return;
         e.preventDefault();
-        const nextMuted = !muted;
-        setMuted(nextMuted);
-        triggerAlert('mute', { value: nextMuted ? 0 : volume, muted: nextMuted });
+        changeUserMute(!muted);
         return;
       }
 
       // Windows Native Volume Step: +2 per click/press, max 100
       if (e.key === 'AudioVolumeUp' || (!inInput && !assistantOpen && e.key === ']')) {
         e.preventDefault();
-        setMuted(false);
-        setVolume((v) => {
-          const next = Math.min(100, v + 2);
-          if (v === 100) setNudgeCount((c) => c + 1);
-          triggerAlert('volume', { value: next, muted: false });
-          return next;
-        });
+        if (volume === 100) setNudgeCount((c) => c + 1);
+        changeUserVolume(Math.min(100, volume + 2), false);
         return;
       }
 
       // Windows Native Volume Step: -2 per click/press, min 0
       if (e.key === 'AudioVolumeDown' || (!inInput && !assistantOpen && e.key === '[')) {
         e.preventDefault();
-        setVolume((v) => {
-          const next = Math.max(0, v - 2);
-          if (v === 0) setNudgeCount((c) => c + 1);
-          setMuted(next === 0);
-          triggerAlert('volume', { value: next, muted: next === 0 });
-          return next;
-        });
+        if (volume === 0) setNudgeCount((c) => c + 1);
+        const next = Math.max(0, volume - 2);
+        changeUserVolume(next, next === 0);
         return;
       }
 
@@ -3960,12 +4024,8 @@ export default function App() {
             (e.altKey && e.key === 'ArrowUp')))
       ) {
         e.preventDefault();
-        setBrightness((b) => {
-          const next = Math.min(10, b + 1);
-          if (b === 10) setNudgeCount((c) => c + 1);
-          triggerAlert('brightness', { value: next });
-          return next;
-        });
+        if (brightness === 10) setNudgeCount((c) => c + 1);
+        changeUserBrightness(Math.min(10, brightness + 1));
         return;
       }
 
@@ -3982,12 +4042,8 @@ export default function App() {
             (e.altKey && e.key === 'ArrowDown')))
       ) {
         e.preventDefault();
-        setBrightness((b) => {
-          const next = Math.max(0, b - 1);
-          if (b === 0) setNudgeCount((c) => c + 1);
-          triggerAlert('brightness', { value: next });
-          return next;
-        });
+        if (brightness === 0) setNudgeCount((c) => c + 1);
+        changeUserBrightness(Math.max(0, brightness - 1));
         return;
       }
     };
@@ -5738,20 +5794,13 @@ export default function App() {
                   onWheel={(e) => {
                     e.stopPropagation();
                     if (activeAlert.type === 'brightness') {
-                      setBrightness((b) => {
-                        const next =
-                          e.deltaY < 0 ? Math.min(10, b + 1) : Math.max(0, b - 1);
-                        triggerAlert('brightness', { value: next });
-                        return next;
-                      });
+                      const next =
+                        e.deltaY < 0 ? Math.min(10, brightness + 1) : Math.max(0, brightness - 1);
+                      changeUserBrightness(next);
                     } else {
-                      setVolume((v) => {
-                        const next =
-                          e.deltaY < 0 ? Math.min(100, v + 2) : Math.max(0, v - 2);
-                        setMuted(next === 0);
-                        triggerAlert('volume', { value: next, muted: next === 0 });
-                        return next;
-                      });
+                      const next =
+                        e.deltaY < 0 ? Math.min(100, volume + 2) : Math.max(0, volume - 2);
+                      changeUserVolume(next, next === 0);
                     }
                   }}
                   className="w-full flex items-center gap-3 px-1"

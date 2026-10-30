@@ -2,7 +2,8 @@ import { createServer } from 'http';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { exec } from 'child_process';
+import { exec, execFile, spawn, ChildProcess } from 'child_process';
+import readline from 'readline';
 import { promisify } from 'util';
 import express, { Request, Response, NextFunction } from 'express';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
@@ -17,6 +18,7 @@ const currentDir =
     : process.cwd();
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 const app = express();
 const DESKTOP_DEFAULT_PORT = 45781;
@@ -37,7 +39,7 @@ app.use((_req, res, next) => {
 app.get('/api/winisle-health', (_req, res) => {
   res.json({
     app: 'winisle-desktop',
-    version: '1.0.0',
+    version: '1.1.0',
     status: 'ready',
     platform: process.platform,
   });
@@ -1683,127 +1685,232 @@ app.get('/api/music/lyrics', async (req, res) => {
   });
 });
 
-// Endpoint 3: Real Windows/System Hardware Status (Battery, Master Volume, Mute, Brightness via CoreAudio & WMI)
-app.get('/api/system/hardware-status', async (_req, res) => {
-  if (process.platform === 'win32') {
-    let batteryLevel: number | undefined;
-    let isCharging: boolean | undefined;
-    let volume: number | undefined;
-    let muted: boolean | undefined;
-    let brightness: number | undefined;
+// --- Windows Native Hardware Controller & Daemon Manager ---
+interface HardwareStatusState {
+  batteryLevel?: number;
+  isCharging?: boolean;
+  volume?: number;
+  muted?: boolean;
+  brightness?: number;
+  brightnessPercent?: number;
+  lastUpdated: number;
+}
 
+let cachedHardwareState: HardwareStatusState = {
+  lastUpdated: 0,
+};
+
+let hardwareDaemonProcess: ChildProcess | null = null;
+let hardwareDaemonRl: readline.Interface | null = null;
+const daemonPendingCallbacks: Array<(data: any) => void> = [];
+const sseHardwareClients = new Set<Response>();
+
+function locateHardwareHelperExe(): string | null {
+  const candidatePaths = [
+    path.join(currentDir, 'electron', 'hardware-helper.exe'),
+    path.join(__dirname, 'electron', 'hardware-helper.exe'),
+    path.join(__dirname, '..', 'electron', 'hardware-helper.exe'),
+    path.join((process as any).resourcesPath || '', 'app.asar.unpacked', 'electron', 'hardware-helper.exe'),
+    path.join((process as any).resourcesPath || '', 'electron', 'hardware-helper.exe'),
+    path.resolve(process.cwd(), 'electron', 'hardware-helper.exe'),
+  ];
+  return candidatePaths.find((p) => {
     try {
-      const psScript = `
-$ErrorActionPreference = 'SilentlyContinue'
-$bat = Get-CimInstance -ClassName Win32_Battery | Select-Object -First 1 EstimatedChargeRemaining, BatteryStatus
-$bri = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness | Select-Object -First 1 CurrentBrightness
-
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-
-[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IAudioEndpointVolume {
-    int RegisterControlChangeNotify(IntPtr pNotify);
-    int UnregisterControlChangeNotify(IntPtr pNotify);
-    int GetChannelCount(out int pnChannelCount);
-    int SetMasterVolumeLevel(float fLevelDB, Guid pguidEventContext);
-    int SetMasterVolumeLevelScalar(float fLevel, Guid pguidEventContext);
-    int GetMasterVolumeLevel(out float pfLevelDB);
-    int GetMasterVolumeLevelScalar(out float pfLevel);
-    int SetChannelVolumeLevel(uint nChannel, float fLevelDB, Guid pguidEventContext);
-    int SetChannelVolumeLevelScalar(uint nChannel, float fLevel, Guid pguidEventContext);
-    int GetChannelVolumeLevel(uint nChannel, out float pfLevelDB);
-    int GetChannelVolumeLevelScalar(uint nChannel, out float pfLevel);
-    int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, Guid pguidEventContext);
-    int GetMute(out bool pbMute);
-}
-[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDevice {
-    int Activate(ref Guid id, int clsCtx, int activationParams, out IAudioEndpointVolume aev);
-}
-[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDeviceEnumerator {
-    int NotImpl1();
-    int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
-}
-[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
-class MMDeviceEnumeratorComObject { }
-
-public class WinCoreAudio {
-    public static float GetVolume() {
-        var enumerator = new MMDeviceEnumeratorComObject() as IMMDeviceEnumerator;
-        IMMDevice dev = null;
-        Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0, 1, out dev));
-        Guid epvId = typeof(IAudioEndpointVolume).GUID;
-        IAudioEndpointVolume epv = null;
-        Marshal.ThrowExceptionForHR(dev.Activate(ref epvId, 23, 0, out epv));
-        float v = -1;
-        Marshal.ThrowExceptionForHR(epv.GetMasterVolumeLevelScalar(out v));
-        return v;
-    }
-    public static bool GetMute() {
-        var enumerator = new MMDeviceEnumeratorComObject() as IMMDeviceEnumerator;
-        IMMDevice dev = null;
-        Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0, 1, out dev));
-        Guid epvId = typeof(IAudioEndpointVolume).GUID;
-        IAudioEndpointVolume epv = null;
-        Marshal.ThrowExceptionForHR(dev.Activate(ref epvId, 23, 0, out epv));
-        bool m = false;
-        Marshal.ThrowExceptionForHR(epv.GetMute(out m));
-        return m;
-    }
-}
-"@
-
-$vol = [Math]::Round([WinCoreAudio]::GetVolume() * 100)
-$mute = [WinCoreAudio]::GetMute()
-
-@{
-  batteryLevel = if ($bat) { $bat.EstimatedChargeRemaining } else { $null }
-  batteryStatus = if ($bat) { $bat.BatteryStatus } else { $null }
-  brightness = if ($bri) { [Math]::Round($bri.CurrentBrightness / 10) } else { $null }
-  volume = $vol
-  muted = $mute
-} | ConvertTo-Json -Compress
-`;
-      const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
-      const { stdout } = await withTimeout(
-        execAsync(`powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`),
-        2800,
-        'win-hardware-status'
-      );
-      if (stdout && stdout.trim()) {
-        const parsed = JSON.parse(stdout.trim());
-        if (typeof parsed?.batteryLevel === 'number') {
-          batteryLevel = parsed.batteryLevel;
-        }
-        if (
-          parsed?.batteryStatus === 2 ||
-          parsed?.batteryStatus === 6 ||
-          parsed?.batteryStatus === 7
-        ) {
-          isCharging = true;
-        } else if (typeof parsed?.batteryStatus === 'number') {
-          isCharging = false;
-        }
-        if (typeof parsed?.volume === 'number' && parsed.volume >= 0 && parsed.volume <= 100) {
-          volume = parsed.volume;
-        }
-        if (typeof parsed?.muted === 'boolean') {
-          muted = parsed.muted;
-        }
-        if (typeof parsed?.brightness === 'number' && parsed.brightness >= 0 && parsed.brightness <= 10) {
-          brightness = parsed.brightness;
-        }
-      }
+      return fs.existsSync(p);
     } catch {
-      // ignore if CoreAudio/WMI unavailable
+      return false;
     }
+  }) || null;
+}
 
+function broadcastHardwareEvent(payload: Record<string, any>) {
+  const dataStr = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const client of sseHardwareClients) {
+    try {
+      client.write(dataStr);
+    } catch {
+      sseHardwareClients.delete(client);
+    }
+  }
+}
+
+function ensureHardwareDaemon(): boolean {
+  if (process.platform !== 'win32') return false;
+  if (hardwareDaemonProcess && !hardwareDaemonProcess.killed) return true;
+
+  const helperExe = locateHardwareHelperExe();
+  if (!helperExe) return false;
+
+  try {
+    const proc = spawn(helperExe, ['--daemon'], {
+      stdio: ['pipe', 'pipe', 'ignore'],
+      windowsHide: true,
+    });
+
+    proc.on('error', (err) => {
+      console.warn('[WinIsle Hardware Daemon] Spawn error:', err?.message);
+      hardwareDaemonProcess = null;
+    });
+
+    proc.on('exit', () => {
+      hardwareDaemonProcess = null;
+    });
+
+    const rl = readline.createInterface({ input: proc.stdout! });
+    rl.on('line', (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      try {
+        const json = JSON.parse(trimmed);
+        if (json && json.event === 'volume_changed') {
+          if (typeof json.volume === 'number') {
+            cachedHardwareState.volume = json.volume;
+          }
+          if (typeof json.muted === 'boolean') {
+            cachedHardwareState.muted = json.muted;
+          }
+          cachedHardwareState.lastUpdated = Date.now();
+          broadcastHardwareEvent({
+            type: 'osHardwareStatus',
+            volume: json.volume,
+            muted: json.muted,
+          });
+          return;
+        }
+
+        const cb = daemonPendingCallbacks.shift();
+        if (cb) cb(json);
+      } catch {
+        const cb = daemonPendingCallbacks.shift();
+        if (cb) cb(null);
+      }
+    });
+
+    hardwareDaemonProcess = proc;
+    hardwareDaemonRl = rl;
+    return true;
+  } catch (err) {
+    console.warn('[WinIsle Hardware Daemon] Failed to start:', err);
+    return false;
+  }
+}
+
+function cleanupHardwareDaemon() {
+  if (hardwareDaemonProcess) {
+    try {
+      hardwareDaemonProcess.stdin?.write('exit\n');
+      hardwareDaemonProcess.kill();
+    } catch {}
+    hardwareDaemonProcess = null;
+  }
+}
+process.on('exit', cleanupHardwareDaemon);
+
+async function requestHardwareFromDaemon(cmd: string, timeoutMs = 400): Promise<any> {
+  if (!ensureHardwareDaemon() || !hardwareDaemonProcess || !hardwareDaemonProcess.stdin) {
+    return null;
+  }
+  return new Promise((resolve) => {
+    let timer: NodeJS.Timeout | null = null;
+    const cb = (res: any) => {
+      if (timer) clearTimeout(timer);
+      resolve(res);
+    };
+    timer = setTimeout(() => {
+      const idx = daemonPendingCallbacks.indexOf(cb);
+      if (idx !== -1) daemonPendingCallbacks.splice(idx, 1);
+      resolve(null);
+    }, timeoutMs);
+
+    daemonPendingCallbacks.push(cb);
+    try {
+      hardwareDaemonProcess.stdin.write(cmd.trim() + '\n');
+    } catch {
+      const idx = daemonPendingCallbacks.indexOf(cb);
+      if (idx !== -1) daemonPendingCallbacks.splice(idx, 1);
+      if (timer) clearTimeout(timer);
+      resolve(null);
+    }
+  });
+}
+
+async function applyHardwareControl(patch: { volume?: number; muted?: boolean; brightness?: number }): Promise<boolean> {
+  const { volume, muted, brightness } = patch;
+  const helperExe = locateHardwareHelperExe();
+
+  const parts: string[] = [];
+  if (typeof volume === 'number') {
+    const clampedVol = Math.max(0, Math.min(100, Math.round(volume)));
+    parts.push(`vol=${clampedVol}`);
+    cachedHardwareState.volume = clampedVol;
+  }
+  if (typeof muted === 'boolean') {
+    parts.push(`mute=${muted ? 1 : 0}`);
+    cachedHardwareState.muted = muted;
+  }
+  if (typeof brightness === 'number') {
+    const briPct = Math.max(0, Math.min(100, Math.round(brightness * 10)));
+    parts.push(`bri=${briPct}`);
+    cachedHardwareState.brightness = Math.round(brightness);
+    cachedHardwareState.brightnessPercent = briPct;
+  }
+  cachedHardwareState.lastUpdated = Date.now();
+
+  if (parts.length === 0) return true;
+
+  // 1. Try daemon (fastest, ~1ms)
+  if (ensureHardwareDaemon()) {
+    const daemonRes = await requestHardwareFromDaemon(`set ${parts.join(' ')}`, 300);
+    if (daemonRes && daemonRes.ok) return true;
+  }
+
+  // 2. Try one-shot helper exe (~20-50ms)
+  if (helperExe) {
+    try {
+      const { stdout } = await withTimeout(
+        execFileAsync(helperExe, ['set', ...parts]),
+        1200,
+        'hardware-helper-set'
+      );
+      if (stdout && stdout.includes('"ok":true')) return true;
+    } catch (e) {
+      console.warn('[WinIsle] Helper set failed, falling back:', e);
+    }
+  }
+
+  // 3. Fallback: PowerShell for brightness methods if needed
+  if (typeof brightness === 'number') {
+    try {
+      const pct = Math.max(0, Math.min(100, Math.round(brightness * 10)));
+      await execAsync(
+        `powershell -NoProfile -NonInteractive -Command "$m = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods; if ($m) { Invoke-CimMethod -InputObject $m -MethodName WmiSetBrightness -Arguments @{ Timeout = 1; Brightness = ${pct} } | Out-Null }"`
+      );
+    } catch {}
+  }
+  return true;
+}
+
+// Endpoint 3: Real Windows/System Hardware Status (Battery, Master Volume, Mute, Brightness via fast native helper)
+app.get('/api/system/hardware-status', async (_req, res) => {
+  if (process.platform !== 'win32') {
+    return res.json({
+      osHardwareAvailable: false,
+      platform: process.platform,
+    });
+  }
+
+  let batteryLevel: number | undefined = cachedHardwareState.batteryLevel;
+  let isCharging: boolean | undefined = cachedHardwareState.isCharging;
+  let volume: number | undefined = cachedHardwareState.volume;
+  let muted: boolean | undefined = cachedHardwareState.muted;
+  let brightness: number | undefined = cachedHardwareState.brightness;
+
+  // If cached state is very fresh (< 350ms) and has valid volume, return immediately without disk/process overhead
+  const now = Date.now();
+  if (now - cachedHardwareState.lastUpdated < 350 && volume !== undefined) {
     return res.json({
       osHardwareAvailable: true,
-      platform: process.platform,
+      platform: 'win32',
       batteryLevel,
       isCharging,
       volume,
@@ -1812,15 +1919,140 @@ $mute = [WinCoreAudio]::GetMute()
     });
   }
 
-  // When running in cloud preview container (non-Windows), do NOT return hardcoded volume: 65
-  // so the user's actual volume setting is never overwritten by fake server numbers.
+  // 1. Try daemon (~1ms)
+  if (ensureHardwareDaemon()) {
+    const data = await requestHardwareFromDaemon('get', 300);
+    if (data && typeof data === 'object') {
+      if (typeof data.batteryLevel === 'number') batteryLevel = data.batteryLevel;
+      if (typeof data.isCharging === 'boolean') isCharging = data.isCharging;
+      if (typeof data.volume === 'number') volume = data.volume;
+      if (typeof data.muted === 'boolean') muted = data.muted;
+      if (typeof data.brightness === 'number') brightness = data.brightness;
+
+      cachedHardwareState = {
+        batteryLevel,
+        isCharging,
+        volume,
+        muted,
+        brightness,
+        brightnessPercent: data.brightnessPercent,
+        lastUpdated: Date.now(),
+      };
+
+      return res.json({
+        osHardwareAvailable: true,
+        platform: 'win32',
+        batteryLevel,
+        isCharging,
+        volume,
+        muted,
+        brightness,
+      });
+    }
+  }
+
+  // 2. Try one-shot helper exe (~20-50ms)
+  const helperExe = locateHardwareHelperExe();
+  if (helperExe) {
+    try {
+      const { stdout } = await withTimeout(
+        execFileAsync(helperExe, ['get']),
+        800,
+        'hardware-helper-get'
+      );
+      if (stdout && stdout.trim()) {
+        const parsed = JSON.parse(stdout.trim());
+        if (typeof parsed?.batteryLevel === 'number') batteryLevel = parsed.batteryLevel;
+        if (typeof parsed?.isCharging === 'boolean') isCharging = parsed.isCharging;
+        if (typeof parsed?.volume === 'number') volume = parsed.volume;
+        if (typeof parsed?.muted === 'boolean') muted = parsed.muted;
+        if (typeof parsed?.brightness === 'number') brightness = parsed.brightness;
+
+        cachedHardwareState = {
+          batteryLevel,
+          isCharging,
+          volume,
+          muted,
+          brightness,
+          brightnessPercent: parsed?.brightnessPercent,
+          lastUpdated: Date.now(),
+        };
+
+        return res.json({
+          osHardwareAvailable: true,
+          platform: 'win32',
+          batteryLevel,
+          isCharging,
+          volume,
+          muted,
+          brightness,
+        });
+      }
+    } catch (e) {
+      console.warn('[WinIsle] Helper get failed, trying fallback:', e);
+    }
+  }
+
+  // 3. Fallback: lightweight PowerShell (no large base64, safe under 8191 char limit)
+  try {
+    const psScript = `$bat = Get-CimInstance -ClassName Win32_Battery | Select-Object -First 1 EstimatedChargeRemaining, BatteryStatus; $bri = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness | Select-Object -First 1 CurrentBrightness; @{ batteryLevel = if ($bat) { $bat.EstimatedChargeRemaining } else { $null }; batteryStatus = if ($bat) { $bat.BatteryStatus } else { $null }; brightness = if ($bri) { [Math]::Round($bri.CurrentBrightness / 10) } else { $null } } | ConvertTo-Json -Compress`;
+    const { stdout } = await withTimeout(
+      execAsync(`powershell -NoProfile -NonInteractive -Command "${psScript}"`),
+      1500,
+      'win-hardware-status-fallback'
+    );
+    if (stdout && stdout.trim()) {
+      const parsed = JSON.parse(stdout.trim());
+      if (typeof parsed?.batteryLevel === 'number') batteryLevel = parsed.batteryLevel;
+      if (parsed?.batteryStatus === 2 || parsed?.batteryStatus === 6 || parsed?.batteryStatus === 7) isCharging = true;
+      else if (typeof parsed?.batteryStatus === 'number') isCharging = false;
+      if (typeof parsed?.brightness === 'number') brightness = parsed.brightness;
+    }
+  } catch {}
+
   return res.json({
-    osHardwareAvailable: false,
+    osHardwareAvailable: true,
     platform: process.platform,
+    batteryLevel,
+    isCharging,
+    volume,
+    muted,
+    brightness,
   });
 });
 
-// Endpoint 3b: Set Real Windows OS Master Volume, Mute, or Brightness when running on Windows
+// Endpoint 3b: Real-time SSE Hardware Event Stream (Immediate push on volume/mute change)
+app.get('/api/system/hardware-stream', (req, res) => {
+  if (process.platform !== 'win32') {
+    return res.status(404).end();
+  }
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  sseHardwareClients.add(res);
+
+  // Send initial state immediately
+  if (cachedHardwareState.volume !== undefined || cachedHardwareState.brightness !== undefined) {
+    res.write(`data: ${JSON.stringify({
+      type: 'osHardwareStatus',
+      volume: cachedHardwareState.volume,
+      muted: cachedHardwareState.muted,
+      brightness: cachedHardwareState.brightness,
+      batteryLevel: cachedHardwareState.batteryLevel,
+      isCharging: cachedHardwareState.isCharging,
+    })}\n\n`);
+  }
+
+  ensureHardwareDaemon();
+
+  req.on('close', () => {
+    sseHardwareClients.delete(res);
+  });
+});
+
+// Endpoint 3c: Set Real Windows OS Master Volume, Mute, or Brightness when running on Windows
 app.post('/api/system/hardware-control', async (req, res) => {
   const { volume, muted, brightness } = req.body || {};
   if (process.platform !== 'win32') {
@@ -1828,75 +2060,8 @@ app.post('/api/system/hardware-control', async (req, res) => {
   }
 
   try {
-    const scripts: string[] = [`$ErrorActionPreference = 'SilentlyContinue'`];
-    if (typeof volume === 'number' || typeof muted === 'boolean') {
-      const clampedVol =
-        typeof volume === 'number' ? Math.max(0, Math.min(1, volume / 100)).toFixed(3) : null;
-      scripts.push(`
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IAudioEndpointVolume {
-    int RegisterControlChangeNotify(IntPtr pNotify);
-    int UnregisterControlChangeNotify(IntPtr pNotify);
-    int GetChannelCount(out int pnChannelCount);
-    int SetMasterVolumeLevel(float fLevelDB, Guid pguidEventContext);
-    int SetMasterVolumeLevelScalar(float fLevel, Guid pguidEventContext);
-    int GetMasterVolumeLevel(out float pfLevelDB);
-    int GetMasterVolumeLevelScalar(out float pfLevel);
-    int SetChannelVolumeLevel(uint nChannel, float fLevelDB, Guid pguidEventContext);
-    int SetChannelVolumeLevelScalar(uint nChannel, float fLevel, Guid pguidEventContext);
-    int GetChannelVolumeLevel(uint nChannel, out float pfLevelDB);
-    int GetChannelVolumeLevelScalar(uint nChannel, out float pfLevel);
-    int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, Guid pguidEventContext);
-    int GetMute(out bool pbMute);
-}
-[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDevice {
-    int Activate(ref Guid id, int clsCtx, int activationParams, out IAudioEndpointVolume aev);
-}
-[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDeviceEnumerator {
-    int NotImpl1();
-    int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
-}
-[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
-class MMDeviceEnumeratorComObject { }
-public class WinCoreAudioSet {
-    public static void Apply(float vol, int setVol, bool mute, int setMute) {
-        var enumerator = new MMDeviceEnumeratorComObject() as IMMDeviceEnumerator;
-        IMMDevice dev = null;
-        Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0, 1, out dev));
-        Guid epvId = typeof(IAudioEndpointVolume).GUID;
-        IAudioEndpointVolume epv = null;
-        Marshal.ThrowExceptionForHR(dev.Activate(ref epvId, 23, 0, out epv));
-        if (setVol == 1) Marshal.ThrowExceptionForHR(epv.SetMasterVolumeLevelScalar(vol, Guid.Empty));
-        if (setMute == 1) Marshal.ThrowExceptionForHR(epv.SetMute(mute, Guid.Empty));
-    }
-}
-"@
-[WinCoreAudioSet]::Apply(${clampedVol ?? '0'}, ${clampedVol !== null ? 1 : 0}, $${
-        muted ? 'true' : 'false'
-      }, ${typeof muted === 'boolean' ? 1 : 0})
-`);
-    }
-
-    if (typeof brightness === 'number') {
-      const pct = Math.max(0, Math.min(100, Math.round(brightness * 10)));
-      scripts.push(`
-$monitor = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods | Select-Object -First 1
-if ($monitor) { Invoke-CimMethod -InputObject $monitor -MethodName WmiSetBrightness -Arguments @{ Timeout = 1; Brightness = ${pct} } | Out-Null }
-`);
-    }
-
-    const encoded = Buffer.from(scripts.join('\n'), 'utf16le').toString('base64');
-    await withTimeout(
-      execAsync(`powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`),
-      2500,
-      'win-hardware-control'
-    );
-    return res.json({ ok: true, osHardwareAvailable: true });
+    const ok = await applyHardwareControl({ volume, muted, brightness });
+    return res.json({ ok, osHardwareAvailable: true });
   } catch (err: any) {
     return res.json({ ok: false, error: err?.message });
   }
