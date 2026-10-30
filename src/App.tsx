@@ -44,18 +44,23 @@ import {
 } from './components/IsleIcons';
 import { BotColorName, BotForm, BotShapeName, paletteFor } from './core/bot';
 import { parseLrc, SAMPLE_TRACKS } from './core/lrc';
+import { askGeminiAssistant } from './core/gemini';
 import { getWsBaseUrl } from './utils/apiBase';
 import { parseMusicQuery, hasDescriptiveKeywords, TOP_ARTIST_SIGNATURE_HITS } from './utils/musicQuery';
 import {
   tauriBridge,
   onVolumeChanged,
+  onSystemMediaChanged,
   getHardwareStatus,
+  getSystemMedia,
+  sendSystemMediaCommand,
   setMasterVolume,
   setMasterMute,
   setBrightness as setTauriBrightness,
   setInteractiveLock,
   getSystemScreenshot,
   isTauri,
+  type SystemMediaInfo,
 } from './core/tauri-bridge';
 
 type IslandPage = 'music' | 'notifications' | 'pomodoro' | 'todolist' | 'shelf' | 'calendar';
@@ -1621,20 +1626,12 @@ export default function App() {
       targetShuffle?: boolean
     ) => {
       try {
-        // 1. Electron / WebView2 Native Bridge if running inside desktop shell
-        const winAny = window as any;
-        if (typeof winAny.electronAPI?.mediaControl === 'function') {
-          winAny.electronAPI.mediaControl(action, targetShuffle);
-        } else if (typeof winAny.chrome?.webview?.postMessage === 'function') {
-          winAny.chrome.webview.postMessage({
-            type: 'mediaControl',
-            action,
-            targetShuffle,
-            sourceApp: activeTrackRef.current?.externalApp,
-          });
+        if (isTauri()) {
+          await sendSystemMediaCommand(action, targetShuffle);
+          return;
         }
 
-        // 2. Server-side Windows GSMTC / OS Media Controller endpoint
+        // Fallback for browser / web dev mode
         const res = await fetch('/api/music/os-control', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1643,9 +1640,10 @@ export default function App() {
             targetShuffle,
             sourceApp: activeTrackRef.current?.externalApp,
           }),
-        });
-        if (res.ok) {
-          const data = await res.json();
+        }).catch(() => null);
+
+        if (res && res.ok) {
+          const data = await res.json().catch(() => null);
           if (typeof data?.shuffleActive === 'boolean') {
             setExternalShuffleEnabled(data.shuffleActive);
           }
@@ -2076,57 +2074,103 @@ export default function App() {
     handleTrackEndedRef.current = handleTrackEnded;
   }, [handleTrackEnded]);
 
-  // Poll OS Media Session (/api/music/os-now-playing) to detect External Apps (Spotify, YouTube Music, OS Media)
-  // and synchronize external shuffle state
-  const refreshExternalOsMedia = useCallback(async () => {
-    try {
-      const res = await fetch('/api/music/os-now-playing');
-      const data = await res.json();
-      if (typeof data?.shuffleActive === 'boolean') {
-        setExternalShuffleEnabled(data.shuffleActive);
-      }
-      // Only take over activeTrack if no internal AI track is currently active (or if activeTrack is already external)
-      const curr = activeTrackRef.current;
-      if (data?.playing && data?.track && (!curr || curr.sourceType === 'external')) {
-        const extTrack: RealMediaTrack = {
-          ...data.track,
-          sourceType: 'external',
-          externalApp: data.sourceApp || data.track.externalApp || 'Spotify',
-          youtubeVideoId: undefined,
-          audioUrl: '',
-          tintRgb: curr?.tintRgb || [0.54, 0.36, 0.16],
-        };
-        const isDifferentSong =
-          !curr ||
-          curr.title.toLowerCase() !== extTrack.title.toLowerCase() ||
-          curr.artist.toLowerCase() !== extTrack.artist.toLowerCase();
-        if (isDifferentSong) {
-          activeTrackRef.current = extTrack;
-          setActiveTrack(extTrack);
-          const initPos = typeof data.positionMs === 'number' ? data.positionMs : 0;
-          positionMsRef.current = initPos;
-          setPositionMs(initPos);
-        } else if (typeof data.positionMs === 'number' && Math.abs(positionMsRef.current - data.positionMs) > 2500) {
-          positionMsRef.current = data.positionMs;
-          setPositionMs(data.positionMs);
-        }
-        setIsPlaying(!data.isPaused);
-      } else if (!data?.playing && curr?.sourceType === 'external') {
-        // External media stopped / closed: reset playback state so Dynamic Island is not stuck on music
+  // Apply system media data to active dynamic island track
+  const applySystemMedia = useCallback((data: SystemMediaInfo | null) => {
+    if (!data) {
+      if (activeTrackRef.current?.sourceType === 'external') {
         setIsPlaying(false);
         activeTrackRef.current = null;
         setActiveTrack(null);
       }
-    } catch {
-      // ignore
+      return;
+    }
+
+    setExternalShuffleEnabled(data.shuffle_active);
+
+    const curr = activeTrackRef.current;
+    if ((data.is_playing || data.title) && (!curr || curr.sourceType === 'external')) {
+      const extTrack: RealMediaTrack = {
+        title: data.title || 'Media',
+        artist: data.artist || data.source_app || 'System Media',
+        album: data.album,
+        sourceType: 'external',
+        externalApp: data.source_app || 'Chrome',
+        durationMs: data.duration_ms || 210000,
+        youtubeVideoId: undefined,
+        audioUrl: '',
+        tintRgb: curr?.tintRgb || [0.54, 0.36, 0.16],
+      };
+
+      const isDifferentSong =
+        !curr ||
+        curr.title.toLowerCase() !== extTrack.title.toLowerCase() ||
+        curr.artist.toLowerCase() !== extTrack.artist.toLowerCase();
+
+      if (isDifferentSong) {
+        activeTrackRef.current = extTrack;
+        setActiveTrack(extTrack);
+        const initPos = typeof data.position_ms === 'number' ? data.position_ms : 0;
+        positionMsRef.current = initPos;
+        setPositionMs(initPos);
+      } else if (
+        typeof data.position_ms === 'number' &&
+        Math.abs(positionMsRef.current - data.position_ms) > 2500
+      ) {
+        positionMsRef.current = data.position_ms;
+        setPositionMs(data.position_ms);
+      }
+      setIsPlaying(data.is_playing);
+    } else if (!data.is_playing && curr?.sourceType === 'external') {
+      setIsPlaying(false);
     }
   }, []);
 
+  // Poll OS Media Session (Tauri Native GSMTC or Web fallback)
+  const refreshExternalOsMedia = useCallback(async () => {
+    try {
+      if (isTauri()) {
+        const sysMedia = await getSystemMedia();
+        applySystemMedia(sysMedia);
+        return;
+      }
+
+      const res = await fetch('/api/music/os-now-playing').catch(() => null);
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data?.playing && data?.track) {
+          applySystemMedia({
+            title: data.track.title || '',
+            artist: data.track.artist || '',
+            album: data.track.album || '',
+            is_playing: !data.isPaused,
+            position_ms: data.positionMs || 0,
+            duration_ms: data.track.durationMs || 210000,
+            source_app: data.sourceApp || data.track.externalApp || 'Media Player',
+            shuffle_active: Boolean(data.shuffleActive),
+          });
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [applySystemMedia]);
+
   useEffect(() => {
     refreshExternalOsMedia();
-    const id = window.setInterval(refreshExternalOsMedia, 6000);
-    return () => window.clearInterval(id);
-  }, [refreshExternalOsMedia]);
+
+    // Native real-time Windows GSMTC event listener
+    const unlisten = onSystemMediaChanged((media) => {
+      applySystemMedia(media);
+    });
+
+    // Adaptive periodic polling (every 1.5s) to guarantee instantaneous detection
+    const id = window.setInterval(refreshExternalOsMedia, 1500);
+
+    return () => {
+      unlisten();
+      window.clearInterval(id);
+    };
+  }, [refreshExternalOsMedia, applySystemMedia]);
 
   // Next Track button (>>):
   // - External App (Spotify / YouTube Music / OS Media): sends 'next' directly to external app
@@ -3558,54 +3602,31 @@ export default function App() {
     abortControllerRef.current = controller;
 
     try {
-      const res = await fetch('/api/gemini/assistant', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-key': geminiApiKey || '',
+      const data = await askGeminiAssistant({
+        prompt: effectivePrompt,
+        apiKey: geminiApiKey,
+        image: imageToSend
+          ? {
+              data: imageToSend.base64,
+              mimeType: imageToSend.mimeType,
+            }
+          : undefined,
+        history: historySnapshot,
+        currentState: {
+          activePage,
+          isPlaying,
+          volume,
+          brightness,
         },
         signal: controller.signal,
-        body: JSON.stringify({
-          prompt: effectivePrompt,
-          image: imageToSend
-            ? {
-                data: imageToSend.base64,
-                mimeType: imageToSend.mimeType,
-              }
-            : undefined,
-          history: historySnapshot,
-          currentState: {
-            activePage,
-            isPlaying,
-            flacEnabled,
-            moodShuffleEnabled:
-              activeTrack?.sourceType === 'external' ? externalShuffleEnabled : moodShuffleEnabled,
-            queueCount: musicQueue.length,
-            trackTitle: activeTrack ? `${activeTrack.title} - ${activeTrack.artist}` : 'Idle',
-            volume,
-            brightness,
-            bluetoothEnabled,
-            wifiEnabled,
-            muted,
-            batteryLevel,
-            isCharging,
-            pomoRunning,
-            pomoRemaining: formatPomoTime(pomoRemainingSeconds),
-            shelfCount: shelfFiles.length,
-            notificationsCount: unreadNotifCount,
-            pendingTasksCount: tasks.length - completedCount,
-          },
-        }),
       });
 
-      const data: GeminiAssistantResponse = await res.json();
-
-      if (res.status === 429) {
-        setSpamNotice(data.error || 'Rate limit reached. Slow down a bit!');
+      if (data.error === 'RATE_LIMIT') {
+        setSpamNotice('Batas laju tercapai. Harap tunggu sebentar.');
         window.setTimeout(() => setSpamNotice(null), 3000);
       }
 
-      const replyText = data.reply || data.error || 'Done.';
+      const replyText = data.reply || data.error || 'Selesai.';
       setAgentHeadline(replyText);
       const sources = Array.isArray(data.searchSources) ? data.searchSources : [];
       setLatestSearchSources(sources);
@@ -3623,13 +3644,11 @@ export default function App() {
           imageUrl: imageToSend?.dataUrl,
           timestamp: timeStr,
           searchSources: sources.length > 0 ? sources : undefined,
-          commandCard: data.commandCard,
-          foundFiles: data.foundFiles,
         });
         return next;
       });
 
-      setBotForm(res.ok ? 'reply' : 'error');
+      setBotForm(data.error && data.error !== 'NO_API_KEY' ? 'error' : 'reply');
 
       // Execute island & laptop actions if returned by Gemini
       if (data.action === 'play_song') {
@@ -3769,8 +3788,23 @@ export default function App() {
         return;
       }
       console.error(err);
-      setAgentHeadline('Gagal terhubung ke layanan Gemini API');
+      const errMsg =
+        'Gagal memproses respon AI. Pastikan Gemini API Key sudah dimasukkan dengan benar di menu Settings.';
+      setAgentHeadline(errMsg);
       setBotForm('error');
+
+      const errReplyId = Date.now() + 2;
+      setRevealedChars(0);
+      setAnimatingMsgId(errReplyId);
+      setMessages((prev) => [
+        ...prev.slice(-58),
+        {
+          id: errReplyId,
+          role: 'assistant',
+          text: errMsg,
+          timestamp: timeStr,
+        },
+      ]);
     } finally {
       abortControllerRef.current = null;
       setAssistantLoading(false);

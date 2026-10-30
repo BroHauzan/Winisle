@@ -30,8 +30,20 @@ export interface HardwareStatus {
   battery: BatteryInfo | null;
 }
 
+export interface SystemMediaInfo {
+  title: string;
+  artist: string;
+  album: string;
+  is_playing: boolean;
+  position_ms: number;
+  duration_ms: number;
+  source_app: string;
+  shuffle_active: boolean;
+}
+
 export type VolumeChangeCallback = (payload: VolumePayload) => void;
 export type ToggleAssistantCallback = () => void;
+export type SystemMediaChangeCallback = (media: SystemMediaInfo | null) => void;
 
 /**
  * Checks if running inside the Tauri 2.0 native environment.
@@ -118,6 +130,44 @@ export function onToggleAssistant(callback: ToggleAssistantCallback): () => void
       unlistenAssistantFn();
       unlistenAssistantFn = null;
       unlistenAssistantPromise = null;
+    }
+  };
+}
+
+const mediaListeners = new Set<SystemMediaChangeCallback>();
+let unlistenMediaPromise: Promise<UnlistenFn> | null = null;
+let unlistenMediaFn: UnlistenFn | null = null;
+
+/**
+ * Subscribes to Windows GSMTC system media playback change events (YouTube Music, Chrome, Spotify, etc.).
+ */
+export function onSystemMediaChanged(callback: SystemMediaChangeCallback): () => void {
+  mediaListeners.add(callback);
+
+  if (isTauri() && !unlistenMediaPromise) {
+    unlistenMediaPromise = listen<SystemMediaInfo | null>('system_media_changed', (event) => {
+      for (const listener of mediaListeners) {
+        try {
+          listener(event.payload);
+        } catch (e) {
+          console.error('[TauriBridge] Error in system_media_changed listener:', e);
+        }
+      }
+    });
+
+    unlistenMediaPromise.then((unlisten) => {
+      unlistenMediaFn = unlisten;
+    }).catch((err) => {
+      console.warn('[TauriBridge] Failed to register system_media_changed listener:', err);
+    });
+  }
+
+  return () => {
+    mediaListeners.delete(callback);
+    if (mediaListeners.size === 0 && unlistenMediaFn) {
+      unlistenMediaFn();
+      unlistenMediaFn = null;
+      unlistenMediaPromise = null;
     }
   };
 }
@@ -253,6 +303,34 @@ export async function getSystemScreenshot(): Promise<string> {
   throw new Error('Not running in Tauri environment');
 }
 
+/**
+ * Queries active system media playback from Windows GSMTC (e.g. YouTube Music, Chrome, Spotify).
+ */
+export async function getSystemMedia(): Promise<SystemMediaInfo | null> {
+  if (isTauri()) {
+    try {
+      return await invoke<SystemMediaInfo | null>('get_system_media');
+    } catch (e) {
+      console.warn('[TauriBridge] get_system_media failed:', e);
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Sends transport command (play, pause, play_pause, next, prev, shuffle) to active system media session.
+ */
+export async function sendSystemMediaCommand(action: string, targetShuffle?: boolean): Promise<void> {
+  if (isTauri()) {
+    try {
+      await invoke('send_system_media_command', { action, targetShuffle });
+    } catch (e) {
+      console.warn('[TauriBridge] send_system_media_command failed:', e);
+    }
+  }
+}
+
 // ── Standard Bridge Export & window.electronAPI Fallback ──
 
 export const tauriBridge = {
@@ -266,8 +344,11 @@ export const tauriBridge = {
   setClickThrough,
   setIgnoreMouseEvents: (ignore: boolean) => setClickThrough(ignore),
   getSystemScreenshot,
+  getSystemMedia,
+  sendSystemMediaCommand,
   onVolumeChanged,
   onToggleAssistant,
+  onSystemMediaChanged,
 };
 
 /**

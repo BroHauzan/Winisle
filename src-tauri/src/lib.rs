@@ -1,9 +1,10 @@
 use std::sync::Arc;
 use tauri::Manager;
 
-pub mod cursor;
 pub mod audio;
+pub mod cursor;
 pub mod hardware;
+pub mod media;
 pub mod screenshot;
 pub mod tray;
 
@@ -27,40 +28,77 @@ pub fn run() {
             hardware::set_brightness,
             hardware::get_battery_status,
             screenshot::get_system_screenshot,
+            media::get_system_media,
+            media::send_system_media_command,
         ])
         .setup(move |app| {
             if let Some(window) = app.get_webview_window("main") {
-                // Initialize DWM transparent glass frame into client area
+                // Ensure window is strictly frameless, transparent, and shadowless
+                let _ = window.set_decorations(false);
+                let _ = window.set_shadow(false);
+
                 #[cfg(target_os = "windows")]
                 {
                     use windows::Win32::Foundation::HWND;
-
-                    #[repr(C)]
-                    #[allow(non_snake_case)]
-                    struct MARGINS {
-                        cxLeftWidth: i32,
-                        cxRightWidth: i32,
-                        cyTopHeight: i32,
-                        cyBottomHeight: i32,
-                    }
-
-                    extern "system" {
-                        fn DwmExtendFrameIntoClientArea(
-                            hwnd: HWND,
-                            pmarinset: *const MARGINS,
-                        ) -> windows::core::HRESULT;
-                    }
+                    use windows::Win32::Graphics::Dwm::{
+                        DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE,
+                        DWMWCP_DONOTROUND, DWM_WINDOW_CORNER_PREFERENCE,
+                    };
+                    use windows::Win32::UI::WindowsAndMessaging::{
+                        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
+                        SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_BORDER,
+                        WS_CAPTION, WS_DLGFRAME, WS_EX_LAYERED, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
+                        WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
+                    };
 
                     if let Ok(raw_hwnd) = window.hwnd() {
                         let hwnd = HWND(raw_hwnd.0);
-                        let margins = MARGINS {
-                            cxLeftWidth: -1,
-                            cxRightWidth: -1,
-                            cyTopHeight: -1,
-                            cyBottomHeight: -1,
-                        };
                         unsafe {
-                            let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+                            // 1. Strip all caption, thickframe, minimize/maximize buttons, system menu and borders
+                            let mut style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+                            style &= !(WS_CAPTION.0 as isize
+                                | WS_THICKFRAME.0 as isize
+                                | WS_MINIMIZEBOX.0 as isize
+                                | WS_MAXIMIZEBOX.0 as isize
+                                | WS_SYSMENU.0 as isize
+                                | WS_BORDER.0 as isize
+                                | WS_DLGFRAME.0 as isize);
+                            style |= WS_POPUP.0 as isize;
+                            SetWindowLongPtrW(hwnd, GWL_STYLE, style);
+
+                            // 2. Ensure layered window style for true alpha transparency
+                            let mut ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+                            ex_style |= WS_EX_LAYERED.0 as isize;
+                            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style);
+
+                            // 3. Disable Windows 11 window corner rounding/borders
+                            let corner_pref = DWMWCP_DONOTROUND;
+                            let _ = DwmSetWindowAttribute(
+                                hwnd,
+                                DWMWA_WINDOW_CORNER_PREFERENCE,
+                                &corner_pref as *const _ as *const _,
+                                std::mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
+                            );
+
+                            // 4. Remove 1px DWM border
+                            let border_color: u32 = 0xFFFFFFFE;
+                            let _ = DwmSetWindowAttribute(
+                                hwnd,
+                                DWMWA_BORDER_COLOR,
+                                &border_color as *const _ as *const _,
+                                std::mem::size_of::<u32>() as u32,
+                            );
+
+                            // 5. Notify system that non-client frame changed
+                            let _ = SetWindowPos(
+                                hwnd,
+                                HWND(std::ptr::null_mut()),
+                                0,
+                                0,
+                                0,
+                                0,
+                                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+                            );
                         }
                     }
                 }
@@ -81,7 +119,7 @@ pub fn run() {
                 // Initial click-through configuration: ignore cursor events outside island
                 let _ = window.set_ignore_cursor_events(true);
 
-                // Reveal window after DWM glass margins, positioning, and click-through are configured
+                // Reveal window
                 let _ = window.show();
             }
 
@@ -90,6 +128,9 @@ pub fn run() {
 
             // Start the native Windows CoreAudio volume listener
             audio::start_audio_listener(app.handle().clone());
+
+            // Start the native Windows GSMTC media listener
+            media::spawn_media_monitor(app.handle().clone());
 
             // Initialize system tray icon, context menu, and Alt+Q hotkey
             let _ = tray::setup_tray(app.handle());
