@@ -1702,7 +1702,8 @@ let cachedHardwareState: HardwareStatusState = {
 
 let hardwareDaemonProcess: ChildProcess | null = null;
 let hardwareDaemonRl: readline.Interface | null = null;
-const daemonPendingCallbacks: Array<(data: any) => void> = [];
+let nextHardwareReqId = 1;
+const daemonPendingRequests = new Map<string, (data: any) => void>();
 const sseHardwareClients = new Set<Response>();
 
 function locateHardwareHelperExe(): string | null {
@@ -1750,10 +1751,18 @@ function ensureHardwareDaemon(): boolean {
     proc.on('error', (err) => {
       console.warn('[WinIsle Hardware Daemon] Spawn error:', err?.message);
       hardwareDaemonProcess = null;
+      for (const cb of daemonPendingRequests.values()) {
+        try { cb(null); } catch {}
+      }
+      daemonPendingRequests.clear();
     });
 
     proc.on('exit', () => {
       hardwareDaemonProcess = null;
+      for (const cb of daemonPendingRequests.values()) {
+        try { cb(null); } catch {}
+      }
+      daemonPendingRequests.clear();
     });
 
     const rl = readline.createInterface({ input: proc.stdout! });
@@ -1774,15 +1783,29 @@ function ensureHardwareDaemon(): boolean {
             type: 'osHardwareStatus',
             volume: json.volume,
             muted: json.muted,
+            isSelf: Boolean(json.isSelf),
           });
           return;
         }
 
-        const cb = daemonPendingCallbacks.shift();
-        if (cb) cb(json);
+        if (json && json.id) {
+          const reqId = String(json.id);
+          const cb = daemonPendingRequests.get(reqId);
+          if (cb) {
+            daemonPendingRequests.delete(reqId);
+            cb(json);
+            return;
+          }
+        }
+
+        const firstKey = daemonPendingRequests.keys().next().value;
+        if (firstKey) {
+          const cb = daemonPendingRequests.get(firstKey);
+          daemonPendingRequests.delete(firstKey);
+          if (cb) cb(json);
+        }
       } catch {
-        const cb = daemonPendingCallbacks.shift();
-        if (cb) cb(null);
+        // Safe ignore unparseable output
       }
     });
 
@@ -1810,6 +1833,7 @@ async function requestHardwareFromDaemon(cmd: string, timeoutMs = 400): Promise<
   if (!ensureHardwareDaemon() || !hardwareDaemonProcess || !hardwareDaemonProcess.stdin) {
     return null;
   }
+  const reqId = `r_${nextHardwareReqId++}`;
   return new Promise((resolve) => {
     let timer: NodeJS.Timeout | null = null;
     const cb = (res: any) => {
@@ -1817,17 +1841,15 @@ async function requestHardwareFromDaemon(cmd: string, timeoutMs = 400): Promise<
       resolve(res);
     };
     timer = setTimeout(() => {
-      const idx = daemonPendingCallbacks.indexOf(cb);
-      if (idx !== -1) daemonPendingCallbacks.splice(idx, 1);
+      daemonPendingRequests.delete(reqId);
       resolve(null);
     }, timeoutMs);
 
-    daemonPendingCallbacks.push(cb);
+    daemonPendingRequests.set(reqId, cb);
     try {
-      hardwareDaemonProcess.stdin.write(cmd.trim() + '\n');
+      hardwareDaemonProcess.stdin.write(`id=${reqId} ${cmd.trim()}\n`);
     } catch {
-      const idx = daemonPendingCallbacks.indexOf(cb);
-      if (idx !== -1) daemonPendingCallbacks.splice(idx, 1);
+      daemonPendingRequests.delete(reqId);
       if (timer) clearTimeout(timer);
       resolve(null);
     }
@@ -2042,6 +2064,7 @@ app.get('/api/system/hardware-stream', (req, res) => {
       brightness: cachedHardwareState.brightness,
       batteryLevel: cachedHardwareState.batteryLevel,
       isCharging: cachedHardwareState.isCharging,
+      isInitial: true,
     })}\n\n`);
   }
 
@@ -3205,6 +3228,21 @@ export async function startServer(customPort?: number) {
       console.log(
         `Isle Server (with Gemini 3.8 Flash Search & Gemini 3.8 Live WS) running on http://localhost:${listenPort}`
       );
+      if (process.platform === 'win32') {
+        ensureHardwareDaemon();
+        requestHardwareFromDaemon('get', 800)
+          .then((res) => {
+            if (res) {
+              if (typeof res.volume === 'number') cachedHardwareState.volume = res.volume;
+              if (typeof res.muted === 'boolean') cachedHardwareState.muted = res.muted;
+              if (typeof res.brightness === 'number') cachedHardwareState.brightness = res.brightness;
+              if (typeof res.batteryLevel === 'number') cachedHardwareState.batteryLevel = res.batteryLevel;
+              if (typeof res.isCharging === 'boolean') cachedHardwareState.isCharging = res.isCharging;
+              cachedHardwareState.lastUpdated = Date.now();
+            }
+          })
+          .catch(() => {});
+      }
       resolve(httpServer);
     });
   });

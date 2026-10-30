@@ -633,6 +633,7 @@ export default function App() {
   const alertTimerRef = useRef<number | null>(null);
   const lastLocalHardwareChangeRef = useRef<number>(0);
   const osHardwareAvailableRef = useRef<boolean>(false);
+  const isInitialSyncRef = useRef<boolean>(true);
 
   const triggerAlert = useCallback(
     (
@@ -777,8 +778,11 @@ export default function App() {
           const data = JSON.parse(event.data);
           if (data && data.type === 'osHardwareStatus') {
             osHardwareAvailableRef.current = true;
-            // Ignore if user adjusted locally within last 1200ms to avoid feedback jitter
-            if (Date.now() - lastLocalHardwareChangeRef.current < 1200) return;
+            const isInitial = Boolean(data.isInitial || isInitialSyncRef.current);
+            isInitialSyncRef.current = false;
+            const isRecentLocalChange = Date.now() - lastLocalHardwareChangeRef.current < 250;
+            const isSelf = Boolean(data.isSelf);
+
             if (typeof data.batteryLevel === 'number') {
               setBatteryLevel((prev) => (prev !== data.batteryLevel ? data.batteryLevel : prev));
             }
@@ -789,8 +793,10 @@ export default function App() {
               setVolume((prev) => {
                 if (prev !== data.volume) {
                   try { window.localStorage.setItem('isle_user_volume', String(data.volume)); } catch {}
-                  // If volume changed externally, pop up the Volume HUD alert
-                  triggerAlert('volume', { value: data.volume, muted: data.muted });
+                  // Only pop up the alert if it's an external change (not our own) and not the initial sync!
+                  if (!isInitial && !isSelf && !isRecentLocalChange) {
+                    triggerAlert('volume', { value: data.volume, muted: data.muted });
+                  }
                   return data.volume;
                 }
                 return prev;
@@ -800,6 +806,9 @@ export default function App() {
               setMuted((prev) => {
                 if (prev !== data.muted) {
                   try { window.localStorage.setItem('isle_user_muted', String(data.muted)); } catch {}
+                  if (!isInitial && !isSelf && !isRecentLocalChange) {
+                    triggerAlert('mute', { value: data.volume ?? volume, muted: data.muted });
+                  }
                   return data.muted;
                 }
                 return prev;
@@ -822,18 +831,19 @@ export default function App() {
     return () => {
       if (es) es.close();
     };
-  }, [triggerAlert]);
+  }, [triggerAlert, volume]);
 
   // 2. Hardware Status Polling (Syncs battery, brightness & master volume accurately without feedback loop)
   useEffect(() => {
     let pollId = 0;
     const fetchOsHardware = () => {
-      if (Date.now() - lastLocalHardwareChangeRef.current < 1200) return;
+      if (Date.now() - lastLocalHardwareChangeRef.current < 250) return;
       fetch('/api/system/hardware-status')
         .then((r) => r.json())
         .then((data) => {
           if (data && data.osHardwareAvailable) {
             osHardwareAvailableRef.current = true;
+            isInitialSyncRef.current = false;
             if (typeof data.batteryLevel === 'number') {
               setBatteryLevel((prev) => (prev !== data.batteryLevel ? data.batteryLevel : prev));
             }
@@ -885,7 +895,7 @@ export default function App() {
     const onNativeHardwareMsg = (ev: MessageEvent) => {
       const payload = ev.data;
       if (payload && typeof payload === 'object' && payload.type === 'osHardwareStatus') {
-        if (Date.now() - lastLocalHardwareChangeRef.current < 1200) return;
+        if (Date.now() - lastLocalHardwareChangeRef.current < 250) return;
         if (typeof payload.volume === 'number') {
           setVolume(payload.volume);
           try { window.localStorage.setItem('isle_user_volume', String(payload.volume)); } catch {}
