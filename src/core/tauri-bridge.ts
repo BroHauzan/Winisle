@@ -39,11 +39,13 @@ export interface SystemMediaInfo {
   duration_ms: number;
   source_app: string;
   shuffle_active: boolean;
+  cover_url?: string;
 }
 
 export type VolumeChangeCallback = (payload: VolumePayload) => void;
 export type ToggleAssistantCallback = () => void;
 export type SystemMediaChangeCallback = (media: SystemMediaInfo | null) => void;
+export type SimpleEventCallback = () => void;
 
 /**
  * Checks if running inside the Tauri 2.0 native environment.
@@ -168,6 +170,86 @@ export function onSystemMediaChanged(callback: SystemMediaChangeCallback): () =>
       unlistenMediaFn();
       unlistenMediaFn = null;
       unlistenMediaPromise = null;
+    }
+  };
+}
+
+const compactListeners = new Set<SimpleEventCallback>();
+let unlistenCompactPromise: Promise<UnlistenFn> | null = null;
+let unlistenCompactFn: UnlistenFn | null = null;
+
+/**
+ * Subscribes to global ALT + H hotkey toggle events.
+ */
+export function onToggleCompact(callback: SimpleEventCallback): () => void {
+  compactListeners.add(callback);
+
+  if (isTauri() && !unlistenCompactPromise) {
+    unlistenCompactPromise = listen('toggle_compact_mode', () => {
+      for (const listener of compactListeners) {
+        try {
+          listener();
+        } catch (e) {
+          console.error('[TauriBridge] Error in toggle_compact_mode listener:', e);
+        }
+      }
+    });
+
+    unlistenCompactPromise
+      .then((unlisten) => {
+        unlistenCompactFn = unlisten;
+      })
+      .catch((err) => {
+        console.warn('[TauriBridge] Failed to register toggle_compact_mode listener:', err);
+      });
+  }
+
+  return () => {
+    compactListeners.delete(callback);
+    if (compactListeners.size === 0 && unlistenCompactFn) {
+      unlistenCompactFn();
+      unlistenCompactFn = null;
+      unlistenCompactPromise = null;
+    }
+  };
+}
+
+const autoCompactListeners = new Set<SimpleEventCallback>();
+let unlistenAutoCompactPromise: Promise<UnlistenFn> | null = null;
+let unlistenAutoCompactFn: UnlistenFn | null = null;
+
+/**
+ * Subscribes to tab-bar top-zone auto-compact events.
+ */
+export function onRequestAutoCompact(callback: SimpleEventCallback): () => void {
+  autoCompactListeners.add(callback);
+
+  if (isTauri() && !unlistenAutoCompactPromise) {
+    unlistenAutoCompactPromise = listen('request_auto_compact', () => {
+      for (const listener of autoCompactListeners) {
+        try {
+          listener();
+        } catch (e) {
+          console.error('[TauriBridge] Error in request_auto_compact listener:', e);
+        }
+      }
+    });
+
+    unlistenAutoCompactPromise
+      .then((unlisten) => {
+        unlistenAutoCompactFn = unlisten;
+      })
+      .catch((err) => {
+        console.warn('[TauriBridge] Failed to register request_auto_compact listener:', err);
+      });
+  }
+
+  return () => {
+    autoCompactListeners.delete(callback);
+    if (autoCompactListeners.size === 0 && unlistenAutoCompactFn) {
+      unlistenAutoCompactFn();
+      unlistenAutoCompactFn = null;
+      unlistenAutoCompactPromise = null;
     }
   };
 }
@@ -349,6 +431,8 @@ export const tauriBridge = {
   onVolumeChanged,
   onToggleAssistant,
   onSystemMediaChanged,
+  onToggleCompact,
+  onRequestAutoCompact,
 };
 
 /**

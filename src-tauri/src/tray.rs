@@ -103,44 +103,40 @@ pub fn spawn_global_hotkey(app: AppHandle) {
     std::thread::Builder::new()
         .name("winisle-hotkey".into())
         .spawn(move || {
-            let hotkey_id = 1;
-            // Alt + Q (0x51 is Virtual Key code for 'Q')
-            // MOD_NOREPEAT (0x4000) prevents auto-repeat while holding key
+            let hotkey_alt_q = 1;
+            let hotkey_alt_h = 2;
             let modifiers: HOT_KEY_MODIFIERS = MOD_ALT | MOD_NOREPEAT;
-            let vk_q = 0x51u32;
+            let vk_q = 0x51u32; // 'Q'
+            let vk_h = 0x48u32; // 'H'
 
             unsafe {
                 // Ensure thread has an initialized message queue
                 let mut dummy_msg = MSG::default();
                 let _ = PeekMessageW(&mut dummy_msg, None, 0, 0, PM_NOREMOVE);
 
-                let registered = RegisterHotKey(
-                    None,
-                    hotkey_id,
-                    modifiers,
-                    vk_q,
-                );
-
-                if registered.is_err() {
-                    eprintln!("[WinIsle] Global hotkey Alt+Q could not be registered (may be in use by another app)");
-                    return;
-                }
+                let _ = RegisterHotKey(None, hotkey_alt_q, modifiers, vk_q);
+                let _ = RegisterHotKey(None, hotkey_alt_h, modifiers, vk_h);
 
                 let mut msg = MSG::default();
                 while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                    if msg.message == WM_HOTKEY && msg.wParam.0 == hotkey_id as usize {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.unminimize();
-                            let _ = window.set_focus();
+                    if msg.message == WM_HOTKEY {
+                        if msg.wParam.0 == hotkey_alt_q as usize {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.unminimize();
+                                let _ = window.set_focus();
+                            }
+                            let _ = app.emit("toggle_isle_assistant", ());
+                        } else if msg.wParam.0 == hotkey_alt_h as usize {
+                            let _ = app.emit("toggle_compact_mode", ());
                         }
-                        let _ = app.emit("toggle_isle_assistant", ());
                     }
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
 
-                let _ = UnregisterHotKey(None, hotkey_id);
+                let _ = UnregisterHotKey(None, hotkey_alt_q);
+                let _ = UnregisterHotKey(None, hotkey_alt_h);
             }
         })
         .expect("failed to spawn hotkey thread");

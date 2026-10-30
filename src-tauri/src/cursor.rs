@@ -105,7 +105,9 @@ pub fn spawn_cursor_monitor(app_handle: AppHandle, state: Arc<CursorMonitorState
     std::thread::Builder::new()
         .name("winisle-cursor-monitor".into())
         .spawn(move || {
+            use tauri::Emitter;
             let mut pt = POINT::default();
+            let mut last_auto_compact = std::time::Instant::now();
             loop {
                 // If interactive lock is active (e.g. Isle Assistant or modal open)
                 if state.is_locked_interactive.load(Ordering::Relaxed) {
@@ -177,6 +179,18 @@ pub fn spawn_cursor_monitor(app_handle: AppHandle, state: Arc<CursorMonitorState
                     && pt.x <= (screen_right + margin_right)
                     && pt.y >= (screen_top - margin_top)
                     && pt.y <= (screen_bottom + margin_bottom);
+
+                // Tab bar top-zone auto-compact detection:
+                // When cursor moves into the top tab bar zone (y <= 42px) to the left or right of the dynamic island
+                let tab_zone_y = (42.0 * scale).round() as i32;
+                if pt.y <= tab_zone_y
+                    && (pt.x < screen_left - margin_left || pt.x > screen_right + margin_right)
+                {
+                    if last_auto_compact.elapsed() > std::time::Duration::from_millis(800) {
+                        let _ = app_handle.emit("request_auto_compact", ());
+                        last_auto_compact = std::time::Instant::now();
+                    }
+                }
 
                 let currently_ignoring = state.currently_ignoring.load(Ordering::Relaxed);
 

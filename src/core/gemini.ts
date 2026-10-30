@@ -86,22 +86,45 @@ export async function askGeminiAssistant(
     parts: userParts,
   });
 
-  // Priority candidate models: prioritize Gemini 3.8 Flash & Gemini 3.1 Flash
+  // Candidate models sequence starting with gemini-3.1-flash-lite as requested by user
   const candidateModels = params.model
-    ? [params.model, 'gemini-3.8-flash', 'gemini-3.1-flash', 'gemini-3.1-flash-lite-preview', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
-    : [
-        'gemini-3.8-flash',
-        'gemini-3.1-flash',
+    ? [
+        params.model,
+        'gemini-3.1-flash-lite',
         'gemini-3.1-flash-lite-preview',
-        'gemini-3-flash-preview',
-        'gemini-2.5-flash',
         'gemini-2.0-flash',
         'gemini-1.5-flash',
+        'gemini-2.5-flash',
+      ]
+    : [
+        'gemini-3.1-flash-lite',
+        'gemini-3.1-flash-lite-preview',
+        'gemini-2.0-flash',
+        'gemini-1.5-flash',
+        'gemini-2.5-flash',
       ];
   const models = Array.from(new Set(candidateModels));
   let lastError = '';
 
   for (const model of models) {
+    if (params.signal?.aborted) {
+      return {
+        reply: 'Permintaan dibatalkan.',
+        error: 'ABORTED',
+      };
+    }
+
+    // Strict 5-second per-model timeout to eliminate any freezing or hanging
+    const modelController = new AbortController();
+    const timeoutId = setTimeout(() => {
+      modelController.abort();
+    }, 5000);
+
+    const abortHandler = () => modelController.abort();
+    if (params.signal) {
+      params.signal.addEventListener('abort', abortHandler, { once: true });
+    }
+
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
         apiKey
@@ -112,7 +135,7 @@ export async function askGeminiAssistant(
         headers: {
           'Content-Type': 'application/json',
         },
-        signal: params.signal,
+        signal: modelController.signal,
         body: JSON.stringify({
           contents,
           systemInstruction: {
@@ -125,30 +148,46 @@ export async function askGeminiAssistant(
         }),
       });
 
+      clearTimeout(timeoutId);
+      if (params.signal) {
+        params.signal.removeEventListener('abort', abortHandler);
+      }
+
       if (!res.ok) {
         const errorJson = await res.json().catch(() => null);
         const errMsg = errorJson?.error?.message || `HTTP ${res.status}`;
         lastError = errMsg;
-        // If 404 (model not found), fall through to next model
-        if (res.status === 404) {
-          continue;
-        }
+
+        // If rate limit reached, return immediately
         if (res.status === 429) {
           return {
-            reply: 'Batas kuota Gemini API tercapai (Rate Limit). Mohon tunggu beberapa saat sebelum mencoba lagi.',
+            reply: 'Batas kuota Gemini API tercapai (Rate Limit). Mohon tunggu beberapa detik sebelum mencoba lagi.',
             error: 'RATE_LIMIT',
           };
         }
-        if (res.status === 400 || res.status === 403) {
+
+        // If API key is invalid
+        if (res.status === 400 && errMsg.toLowerCase().includes('api key')) {
           return {
-            reply: `Gagal mengakses Gemini API: ${errMsg}. Pastikan API Key Anda aktif dan valid.`,
+            reply: 'API Key Gemini Anda tidak valid. Silakan periksa kembali API Key yang Anda masukkan di menu Pengaturan.',
+            error: 'INVALID_API_KEY',
+          };
+        }
+
+        if (res.status === 403) {
+          return {
+            reply: `Akses Gemini API ditolak (${errMsg}). Pastikan API Key aktif dan memiliki izin yang sesuai di Google AI Studio.`,
             error: errMsg,
           };
         }
+
+        // If model not found (404) or unsupported in this region/version, try next model
         continue;
       }
 
       const data = await res.json();
+      clearTimeout(timeoutId);
+
       const candidate = data?.candidates?.[0];
       const replyText =
         candidate?.content?.parts?.map((p: any) => p.text || '').join('') ||
@@ -173,15 +212,26 @@ export async function askGeminiAssistant(
         searchSources: sources.length > 0 ? sources : undefined,
       };
     } catch (err: any) {
-      if (err?.name === 'AbortError') {
-        throw err;
+      clearTimeout(timeoutId);
+      if (params.signal) {
+        params.signal.removeEventListener('abort', abortHandler);
       }
+
+      if (params.signal?.aborted) {
+        return {
+          reply: 'Permintaan dibatalkan.',
+          error: 'ABORTED',
+        };
+      }
+
       lastError = err?.message || String(err);
+      // Timeout or network drop for this specific model, attempt next candidate
+      continue;
     }
   }
 
   return {
-    reply: `Maaf, gagal memproses permintaan ke Gemini API: ${lastError || 'Koneksi terputus'}. Periksa koneksi internet dan API Key Anda.`,
-    error: lastError,
+    reply: `Maaf, gagal memproses respon AI (${lastError || 'Batas waktu terlampaui'}). Silakan periksa API Key dan koneksi internet Anda.`,
+    error: lastError || 'TIMEOUT',
   };
 }

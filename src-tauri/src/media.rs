@@ -13,6 +13,7 @@ pub struct SystemMediaInfo {
     pub duration_ms: u64,
     pub source_app: String,
     pub shuffle_active: bool,
+    pub cover_url: Option<String>,
 }
 
 #[cfg(target_os = "windows")]
@@ -23,6 +24,18 @@ mod win_media {
         GlobalSystemMediaTransportControlsSessionManager,
         GlobalSystemMediaTransportControlsSessionPlaybackStatus,
     };
+    use windows::Storage::Streams::DataReader;
+
+    fn get_system_100ns() -> i64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        if let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) {
+            let secs = duration.as_secs() as i64 + 11_644_473_600;
+            let subsec_100ns = (duration.subsec_nanos() / 100) as i64;
+            secs * 10_000_000 + subsec_100ns
+        } else {
+            0
+        }
+    }
 
     fn clean_source_app(raw_app: &str) -> String {
         let lower = raw_app.to_lowercase();
@@ -37,7 +50,6 @@ mod win_media {
         } else if lower.contains("brave") {
             "Brave".to_string()
         } else if !raw_app.is_empty() {
-            // Strip .exe or path
             raw_app
                 .split('\\')
                 .last()
@@ -47,6 +59,34 @@ mod win_media {
         } else {
             "Media Player".to_string()
         }
+    }
+
+    fn extract_thumbnail_base64(session: &GlobalSystemMediaTransportControlsSession) -> Option<String> {
+        let async_props = session.TryGetMediaPropertiesAsync().ok()?;
+        let props = async_props.get().ok()?;
+        let thumb_ref = props.Thumbnail().ok()?;
+        let async_stream = thumb_ref.OpenReadAsync().ok()?;
+        let stream = async_stream.get().ok()?;
+        let size = stream.Size().ok()? as u32;
+        if size == 0 || size > 5_000_000 {
+            return None;
+        }
+        let content_type = stream.ContentType().ok()?.to_string();
+        let reader = DataReader::CreateDataReader(&stream).ok()?;
+        let async_load = reader.LoadAsync(size).ok()?;
+        let _ = async_load.get().ok()?;
+        let mut bytes = vec![0u8; size as usize];
+        reader.ReadBytes(&mut bytes).ok()?;
+
+        let mime = if content_type.starts_with("image/") {
+            content_type
+        } else {
+            "image/jpeg".to_string()
+        };
+
+        use base64::engine::general_purpose::STANDARD;
+        use base64::Engine;
+        Some(format!("data:{};base64,{}", mime, STANDARD.encode(&bytes)))
     }
 
     pub fn query_current_media() -> Result<Option<SystemMediaInfo>, String> {
@@ -84,7 +124,6 @@ mod win_media {
 
         let is_playing = status == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
 
-        // If stopped or closed and has no info, return None
         if status == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Closed
             || status == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Stopped
         {
@@ -122,15 +161,40 @@ mod win_media {
         let mut position_ms: u64 = 0;
         let mut duration_ms: u64 = 0;
 
+        // Accurate real-time timeline extrapolation:
+        // GSMTC provides a snapshot Position and LastUpdatedTime.
+        // When playing, add the elapsed time since LastUpdatedTime to avoid static 00:01-00:03 looping!
         if let Ok(timeline) = session.GetTimelineProperties() {
-            if let Ok(pos) = timeline.Position() {
-                // TimeSpan Duration is in 100-nanosecond units
-                position_ms = (pos.Duration / 10_000).max(0) as u64;
+            let base_pos = timeline
+                .Position()
+                .map(|p| (p.Duration / 10_000).max(0) as u64)
+                .unwrap_or(0);
+            let mut current_pos = base_pos;
+
+            if is_playing {
+                if let Ok(last_updated) = timeline.LastUpdatedTime() {
+                    let now_100ns = get_system_100ns();
+                    if now_100ns > last_updated.UniversalTime {
+                        let elapsed_ms = (now_100ns - last_updated.UniversalTime) / 10_000;
+                        // Avoid jumping beyond reasonable threshold (e.g. max 12 hours)
+                        if elapsed_ms > 0 && elapsed_ms < 43_200_000 {
+                            current_pos = base_pos + elapsed_ms as u64;
+                        }
+                    }
+                }
             }
+
             if let Ok(end) = timeline.EndTime() {
                 duration_ms = (end.Duration / 10_000).max(0) as u64;
+                if duration_ms > 0 {
+                    current_pos = current_pos.min(duration_ms);
+                }
             }
+
+            position_ms = current_pos;
         }
+
+        let cover_url = extract_thumbnail_base64(session);
 
         Ok(Some(SystemMediaInfo {
             title,
@@ -141,6 +205,7 @@ mod win_media {
             duration_ms,
             source_app,
             shuffle_active,
+            cover_url,
         }))
     }
 
@@ -237,8 +302,9 @@ pub fn spawn_media_monitor(app_handle: AppHandle) {
                                     || a.artist != b.artist
                                     || a.is_playing != b.is_playing
                                     || a.shuffle_active != b.shuffle_active
-                                    // Or position jump > 3s
-                                    || (a.position_ms as i64 - b.position_ms as i64).abs() > 3000
+                                    || a.cover_url != b.cover_url
+                                    // Position jump > 2.5s
+                                    || (a.position_ms as i64 - b.position_ms as i64).abs() > 2500
                             }
                             (None, None) => false,
                         };

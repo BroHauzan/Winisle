@@ -51,6 +51,8 @@ import {
   tauriBridge,
   onVolumeChanged,
   onSystemMediaChanged,
+  onToggleCompact,
+  onRequestAutoCompact,
   getHardwareStatus,
   getSystemMedia,
   sendSystemMediaCommand,
@@ -525,17 +527,12 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  const handleSaveGeminiKey = useCallback(async (keyToSave?: string) => {
+  const handleSaveGeminiKey = useCallback((keyToSave?: string) => {
     const key = (keyToSave ?? geminiApiKey).trim();
     if (!key) return;
     try {
       window.localStorage.setItem('isle_gemini_api_key', key);
       setGeminiApiKey(key);
-      await fetch('/api/gemini/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: key }),
-      });
       setApiKeySaveStatus('Tersimpan!');
       window.setTimeout(() => setApiKeySaveStatus(null), 2500);
     } catch {
@@ -1065,6 +1062,40 @@ export default function App() {
     }
   }, [isExpanded]);
 
+  const isExpandedRef = useRef(isExpanded);
+  isExpandedRef.current = isExpanded;
+  const assistantOpenRef = useRef(assistantOpen);
+  assistantOpenRef.current = assistantOpen;
+
+  // Global toggle compact mode (ALT + H) and Auto-Compact request from cursor at top tab area
+  useEffect(() => {
+    const unlistenToggle = onToggleCompact(() => {
+      if (isExpandedRef.current) {
+        setIsPinnedOpen(false);
+        setIsHovered(false);
+        setDragAutoOpened(false);
+        setAssistantOpen(false);
+        setLyricsMode(false);
+      } else {
+        setIsPinnedOpen(true);
+      }
+    });
+
+    const unlistenAuto = onRequestAutoCompact(() => {
+      if (isExpandedRef.current && !assistantOpenRef.current) {
+        setIsPinnedOpen(false);
+        setIsHovered(false);
+        setDragAutoOpened(false);
+        setLyricsMode(false);
+      }
+    });
+
+    return () => {
+      unlistenToggle();
+      unlistenAuto();
+    };
+  }, []);
+
   // Periodically invoke native memory trimmer every 15s even while music is actively playing or streaming audio
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -1469,6 +1500,27 @@ export default function App() {
     []
   );
 
+  // Helper to sanitize title and extract artist from YouTube / browser titles (e.g. "Artist - Song (Official Video)")
+  const cleanTrackTitleForLyrics = useCallback((rawTitle: string): { title: string; artistGuess?: string } => {
+    let t = rawTitle
+      .replace(/\[[^\]]*\]/g, ' ')
+      .replace(/\((?:official|music|video|audio|lyric|lyrics|remix|hd|4k|feat\.|ft\.|mv).*?\)/gi, ' ')
+      .replace(/\b(?:official\s+video|official\s+audio|lyric\s+video|music\s+video|visualizer|audio\s+track|mv)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (t.includes(' - ')) {
+      const parts = t.split(' - ');
+      if (parts.length >= 2) {
+        return {
+          artistGuess: parts[0].trim(),
+          title: parts.slice(1).join(' - ').trim(),
+        };
+      }
+    }
+    return { title: t };
+  }, []);
+
   // Ensure active track always fetches synced lyrics from LRCLIB if lrc is missing
   useEffect(() => {
     if (!activeTrack || activeTrack.lrc || !activeTrack.title || activeTrack.title === 'Media') {
@@ -1477,7 +1529,17 @@ export default function App() {
     let cancelled = false;
     const fetchMissingLyrics = async () => {
       try {
-        const data = await fetchLrclibLyrics(activeTrack.title, activeTrack.artist);
+        const cleaned = cleanTrackTitleForLyrics(activeTrack.title);
+        const queryTitle = cleaned.title || activeTrack.title;
+        const queryArtist =
+          activeTrack.artist &&
+          activeTrack.artist !== 'Google Chrome' &&
+          activeTrack.artist !== 'System Media' &&
+          activeTrack.artist !== 'Media Player'
+            ? activeTrack.artist
+            : cleaned.artistGuess || '';
+
+        const data = await fetchLrclibLyrics(queryTitle, queryArtist);
         if (!cancelled && data?.lrc) {
           setActiveTrack((prev) =>
             prev && prev.title === activeTrack.title
@@ -1500,7 +1562,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeTrack?.title, activeTrack?.artist, activeTrack?.lrc, fetchLrclibLyrics]);
+  }, [activeTrack?.title, activeTrack?.artist, activeTrack?.lrc, fetchLrclibLyrics, cleanTrackTitleForLyrics]);
 
   // Listen to postMessages from embedded YouTube IFrame for full song stream timing
   // Guards against premature playerState === 0 events during initial buffer so tracks never jump mid-song
@@ -2096,6 +2158,7 @@ export default function App() {
         sourceType: 'external',
         externalApp: data.source_app || 'Chrome',
         durationMs: data.duration_ms || 210000,
+        coverUrl: data.cover_url || curr?.coverUrl || '',
         youtubeVideoId: undefined,
         audioUrl: '',
         tintRgb: curr?.tintRgb || [0.54, 0.36, 0.16],
@@ -2112,12 +2175,18 @@ export default function App() {
         const initPos = typeof data.position_ms === 'number' ? data.position_ms : 0;
         positionMsRef.current = initPos;
         setPositionMs(initPos);
-      } else if (
-        typeof data.position_ms === 'number' &&
-        Math.abs(positionMsRef.current - data.position_ms) > 2500
-      ) {
-        positionMsRef.current = data.position_ms;
-        setPositionMs(data.position_ms);
+      } else {
+        if (data.cover_url && curr.coverUrl !== data.cover_url) {
+          activeTrackRef.current = { ...curr, coverUrl: data.cover_url };
+          setActiveTrack(activeTrackRef.current);
+        }
+        if (
+          typeof data.position_ms === 'number' &&
+          Math.abs(positionMsRef.current - data.position_ms) > 3500
+        ) {
+          positionMsRef.current = data.position_ms;
+          setPositionMs(data.position_ms);
+        }
       }
       setIsPlaying(data.is_playing);
     } else if (!data.is_playing && curr?.sourceType === 'external') {
