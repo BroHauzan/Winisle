@@ -6,8 +6,13 @@
     <title>WinIsle</title>
     <script>
       (function() {
-        var isElectron = !!(window.electronAPI || (typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)));
-        if (!isElectron && window.location.protocol.startsWith('http')) {
+        var isDesktop = !!(
+          window.electronAPI ||
+          window.__TAURI_INTERNALS__ ||
+          window.__TAURI__ ||
+          (typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent))
+        );
+        if (!isDesktop && window.location.protocol.startsWith('http')) {
           try {
             window.open('', '_self').close();
             window.close();

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { updateIslandBounds } from '../core/tauri-bridge';
 
 interface SpringState {
   value: number;
@@ -65,6 +66,23 @@ export const IslandSurface: React.FC<IslandSurfaceProps> = ({
   const voiceLevelRefInternal = useRef(voiceLevel);
   voiceLevelRefInternal.current = voiceLevel;
   const [dims, setDims] = useState({ w: width, h: height, s: shoulder });
+
+  useEffect(() => {
+    const el = document.getElementById('dynamic-island-surface');
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      void updateIslandBounds({
+        left: Math.round(rect.left),
+        top: Math.round(rect.top),
+        right: Math.round(rect.right),
+        bottom: Math.round(rect.bottom),
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      });
+    }
+  }, [dims.w, dims.h, dims.s]);
 
   const springsRef = useRef({
     w: { value: width, velocity: 0, target: width, stiffness: 210, damping: 19.5 },

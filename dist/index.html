@@ -6,8 +6,13 @@
     <title>WinIsle</title>
     <script>
       (function() {
-        var isElectron = !!(window.electronAPI || (typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)));
-        if (!isElectron && window.location.protocol.startsWith('http')) {
+        var isDesktop = !!(
+          window.electronAPI ||
+          window.__TAURI_INTERNALS__ ||
+          window.__TAURI__ ||
+          (typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent))
+        );
+        if (!isDesktop && window.location.protocol.startsWith('http')) {
           try {
             window.open('', '_self').close();
             window.close();
@@ -22,8 +27,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-    <script type="module" crossorigin src="./assets/index-DA7En5e4.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-CSNxOEHA.css">
+    <script type="module" crossorigin src="./assets/index-oyb1F0qx.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Cb0qlJ2q.css">
   </head>
   <body class="bg-transparent text-white antialiased selection:bg-[#0a84ff]/40 selection:text-white overflow-hidden" style="background: transparent;">
     <div id="root"></div>

@@ -46,6 +46,17 @@ import { BotColorName, BotForm, BotShapeName, paletteFor } from './core/bot';
 import { parseLrc, SAMPLE_TRACKS } from './core/lrc';
 import { getWsBaseUrl } from './utils/apiBase';
 import { parseMusicQuery, hasDescriptiveKeywords, TOP_ARTIST_SIGNATURE_HITS } from './utils/musicQuery';
+import {
+  tauriBridge,
+  onVolumeChanged,
+  getHardwareStatus,
+  setMasterVolume,
+  setMasterMute,
+  setBrightness as setTauriBrightness,
+  setInteractiveLock,
+  getSystemScreenshot,
+  isTauri,
+} from './core/tauri-bridge';
 
 type IslandPage = 'music' | 'notifications' | 'pomodoro' | 'todolist' | 'shelf' | 'calendar';
 
@@ -196,6 +207,8 @@ interface CommandCardData {
   riskLevel?: 'amber' | 'green';
 }
 
+export type LyricsSyncType = 'LINE' | 'WORD' | 'synced' | 'unsynced';
+
 interface RealMediaTrack {
   title: string;
   artist: string;
@@ -204,7 +217,7 @@ interface RealMediaTrack {
   isFlac?: boolean;
   durationMs: number;
   lrc: string;
-  syncType?: 'WORD' | 'LINE';
+  syncType?: LyricsSyncType;
   provider?: string;
   wordsByLine?: any[];
   lrclibId?: number;
@@ -256,7 +269,7 @@ interface GeminiAssistantResponse {
     youtubeMusicUrl?: string;
     spotifyUrl?: string;
     lrc?: string;
-    syncType?: 'WORD' | 'LINE';
+    syncType?: LyricsSyncType;
     provider?: string;
     wordsByLine?: any[];
     lrclibId?: number;
@@ -533,19 +546,19 @@ export default function App() {
   // Tracks whether transparent area outside the Dynamic Island should ignore mouse events
   const clickThroughStateRef = useRef<boolean | null>(null);
   const setDesktopClickThrough = useCallback((ignore: boolean) => {
-    if (typeof window === 'undefined' || !window.electronAPI?.setIgnoreMouseEvents) return;
     if (clickThroughStateRef.current === ignore) return;
     clickThroughStateRef.current = ignore;
-    if (ignore) {
-      window.electronAPI.setIgnoreMouseEvents(true, { forward: true });
-    } else {
-      window.electronAPI.setIgnoreMouseEvents(false);
+    void tauriBridge.setClickThrough(ignore);
+    if (typeof window !== 'undefined' && window.electronAPI?.setIgnoreMouseEvents) {
+      if (ignore) {
+        window.electronAPI.setIgnoreMouseEvents(true, { forward: true });
+      } else {
+        window.electronAPI.setIgnoreMouseEvents(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.electronAPI?.setIgnoreMouseEvents) return;
-
     // Start with click-through enabled for transparent area, forwarding mousemove events
     setDesktopClickThrough(true);
 
@@ -580,6 +593,7 @@ export default function App() {
   }, [setDesktopClickThrough]);
 
   useEffect(() => {
+    void setInteractiveLock(assistantOpen);
     if (assistantOpen && assistantMode === 'conversation') {
       setDesktopClickThrough(false);
       const timer = window.setTimeout(() => {
@@ -698,6 +712,18 @@ export default function App() {
     if (Object.keys(patch).length === 0) return;
 
     lastLocalHardwareChangeRef.current = Date.now();
+
+    // 1. Dispatch via Tauri Bridge to native Windows CoreAudio & Brightness engines
+    if (typeof patch.volume === 'number') {
+      void setMasterVolume(patch.volume);
+    }
+    if (typeof patch.muted === 'boolean') {
+      void setMasterMute(patch.muted);
+    }
+    if (typeof patch.brightness === 'number') {
+      void setTauriBrightness(patch.brightness * 10);
+    }
+
     try {
       const winAny = window as any;
       if (typeof winAny.electronAPI?.setHardwareStatus === 'function') {
@@ -768,76 +794,101 @@ export default function App() {
     [queueHardwareControl, triggerAlert]
   );
 
-  // 1. Real-time Hardware Event Stream (SSE from fast CoreAudio/Daemon helper)
+  // 1. Real-time Native Windows CoreAudio Event Stream via Tauri Bridge
   useEffect(() => {
-    let es: EventSource | null = null;
-    try {
-      es = new EventSource('/api/system/hardware-stream');
-      es.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data && data.type === 'osHardwareStatus') {
-            osHardwareAvailableRef.current = true;
-            const isInitial = Boolean(data.isInitial || isInitialSyncRef.current);
-            isInitialSyncRef.current = false;
-            const isRecentLocalChange = Date.now() - lastLocalHardwareChangeRef.current < 250;
-            const isSelf = Boolean(data.isSelf);
+    // Listen to instantaneous volume_changed events from native CoreAudio callback
+    const unlisten = onVolumeChanged((payload) => {
+      osHardwareAvailableRef.current = true;
+      const isInitial = isInitialSyncRef.current;
+      isInitialSyncRef.current = false;
+      const isRecentLocalChange = Date.now() - lastLocalHardwareChangeRef.current < 250;
+      const isSelf = Boolean(payload.is_self);
 
-            if (typeof data.batteryLevel === 'number') {
-              setBatteryLevel((prev) => (prev !== data.batteryLevel ? data.batteryLevel : prev));
+      if (typeof payload.volume === 'number') {
+        setVolume((prev) => {
+          if (prev !== payload.volume) {
+            try {
+              window.localStorage.setItem('isle_user_volume', String(payload.volume));
+            } catch {}
+            // Rapid volume key presses immediately pop up the volume alert HUD without lag!
+            if (!isInitial && !isSelf && !isRecentLocalChange) {
+              triggerAlert('volume', { value: payload.volume, muted: payload.muted });
             }
-            if (typeof data.isCharging === 'boolean') {
-              setIsCharging((prev) => (prev !== data.isCharging ? data.isCharging : prev));
-            }
-            if (typeof data.volume === 'number') {
-              setVolume((prev) => {
-                if (prev !== data.volume) {
-                  try { window.localStorage.setItem('isle_user_volume', String(data.volume)); } catch {}
-                  // Only pop up the alert if it's an external change (not our own) and not the initial sync!
-                  if (!isInitial && !isSelf && !isRecentLocalChange) {
-                    triggerAlert('volume', { value: data.volume, muted: data.muted });
-                  }
-                  return data.volume;
-                }
-                return prev;
-              });
-            }
-            if (typeof data.muted === 'boolean') {
-              setMuted((prev) => {
-                if (prev !== data.muted) {
-                  try { window.localStorage.setItem('isle_user_muted', String(data.muted)); } catch {}
-                  if (!isInitial && !isSelf && !isRecentLocalChange) {
-                    triggerAlert('mute', { value: data.volume ?? volume, muted: data.muted });
-                  }
-                  return data.muted;
-                }
-                return prev;
-              });
-            }
-            if (typeof data.brightness === 'number') {
-              setBrightness((prev) => {
-                if (prev !== data.brightness) {
-                  try { window.localStorage.setItem('isle_user_brightness', String(data.brightness)); } catch {}
-                  return data.brightness;
-                }
-                return prev;
-              });
-            }
+            return payload.volume;
           }
-        } catch {}
-      };
-    } catch {}
+          return prev;
+        });
+      }
+
+      if (typeof payload.muted === 'boolean') {
+        setMuted((prev) => {
+          if (prev !== payload.muted) {
+            try {
+              window.localStorage.setItem('isle_user_muted', String(payload.muted));
+            } catch {}
+            if (!isInitial && !isSelf && !isRecentLocalChange) {
+              triggerAlert('mute', { value: payload.volume ?? volume, muted: payload.muted });
+            }
+            return payload.muted;
+          }
+          return prev;
+        });
+      }
+    });
 
     return () => {
-      if (es) es.close();
+      unlisten();
     };
   }, [triggerAlert, volume]);
 
-  // 2. Hardware Status Polling (Syncs battery, brightness & master volume accurately without feedback loop)
+  // 2. Hardware Status Sync (Syncs battery, brightness & master volume via Tauri Bridge with fallback)
   useEffect(() => {
     let pollId = 0;
     const fetchOsHardware = () => {
       if (Date.now() - lastLocalHardwareChangeRef.current < 250) return;
+
+      // Primary: Query native Windows hardware via Tauri Bridge
+      getHardwareStatus()
+        .then((data) => {
+          osHardwareAvailableRef.current = true;
+          isInitialSyncRef.current = false;
+
+          if (data.battery) {
+            setBatteryLevel(data.battery.percentage);
+            setIsCharging(data.battery.is_charging);
+          }
+          if (typeof data.volume === 'number') {
+            setVolume((prev) => {
+              if (prev !== data.volume) {
+                try { window.localStorage.setItem('isle_user_volume', String(data.volume)); } catch {}
+                return data.volume;
+              }
+              return prev;
+            });
+          }
+          if (typeof data.muted === 'boolean') {
+            setMuted((prev) => {
+              if (prev !== data.muted) {
+                try { window.localStorage.setItem('isle_user_muted', String(data.muted)); } catch {}
+                return data.muted;
+              }
+              return prev;
+            });
+          }
+          if (typeof data.brightness === 'number') {
+            const uiBri = Math.round(data.brightness / 10);
+            setBrightness((prev) => {
+              if (prev !== uiBri) {
+                try { window.localStorage.setItem('isle_user_brightness', String(uiBri)); } catch {}
+                return uiBri;
+              }
+              return prev;
+            });
+          }
+        })
+        .catch(() => {});
+
+      // Secondary fallback for non-Tauri / mock server environments
       fetch('/api/system/hardware-status')
         .then((r) => r.json())
         .then((data) => {
@@ -1326,7 +1377,94 @@ export default function App() {
 
   // ── Equalizer Visualizer is delegated to BeatEqualizerBars (Direct SVG DOM mutation with zero React re-renders) ──
 
-  // Ensure active track always fetches synced lyrics from multi-provider chain if lrc is missing
+  // Helper to fetch synced lyrics directly from LRCLIB API with fallback to embedded SAMPLE_TRACKS
+  const fetchLrclibLyrics = useCallback(
+    async (
+      title: string,
+      artist?: string
+    ): Promise<{
+      lrc: string;
+      syncType?: LyricsSyncType;
+      provider?: string;
+      title?: string;
+      artist?: string;
+      wordsByLine?: any;
+      lrclibId?: number;
+    } | null> => {
+      const cleanTitle = (title || '').trim();
+      const cleanArtist = (artist || '').trim();
+      if (!cleanTitle || cleanTitle === 'Media') return null;
+
+      try {
+        // 1. Direct fetch via exact track_name & artist_name
+        const params = new URLSearchParams({ track_name: cleanTitle, artist_name: cleanArtist });
+        const res = await fetch(`https://lrclib.net/api/get?${params.toString()}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.syncedLyrics || data?.plainLyrics) {
+            return {
+              lrc: data.syncedLyrics || data.plainLyrics || '',
+              syncType: data.syncedLyrics ? 'LINE' : 'unsynced',
+              provider: 'lrclib.net',
+              title: data.trackName || cleanTitle,
+              artist: data.artistName || cleanArtist,
+              lrclibId: data.id,
+            };
+          }
+        }
+
+        // 2. Fallback to fuzzy search query
+        const query = cleanArtist ? `${cleanTitle} ${cleanArtist}` : cleanTitle;
+        const searchRes = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`);
+        if (searchRes.ok) {
+          const list = await searchRes.json();
+          if (Array.isArray(list) && list.length > 0) {
+            const best = list.find((item: any) => item.syncedLyrics) || list[0];
+            if (best?.syncedLyrics || best?.plainLyrics) {
+              return {
+                lrc: best.syncedLyrics || best.plainLyrics || '',
+                syncType: best.syncedLyrics ? 'LINE' : 'unsynced',
+                provider: 'lrclib.net',
+                title: best.trackName || cleanTitle,
+                artist: best.artistName || cleanArtist,
+                lrclibId: best.id,
+              };
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Lyrics] LRCLIB network query failed, falling back to embedded tracks:', err);
+      }
+
+      // 3. Fallback to embedded SAMPLE_TRACKS if network is offline or no match found
+      const lowerTitle = cleanTitle.toLowerCase();
+      const lowerArtist = cleanArtist.toLowerCase();
+      const sampleMatch = SAMPLE_TRACKS.find((st) => {
+        const stTitle = st.title.toLowerCase();
+        const stArtist = st.artist.toLowerCase();
+        return (
+          stTitle.includes(lowerTitle) ||
+          lowerTitle.includes(stTitle) ||
+          (lowerArtist && (stArtist.includes(lowerArtist) || lowerArtist.includes(stArtist)))
+        );
+      });
+
+      if (sampleMatch && sampleMatch.lrc) {
+        return {
+          lrc: sampleMatch.lrc,
+          syncType: 'LINE',
+          provider: 'embedded-sample',
+          title: sampleMatch.title,
+          artist: sampleMatch.artist,
+        };
+      }
+
+      return null;
+    },
+    []
+  );
+
+  // Ensure active track always fetches synced lyrics from LRCLIB if lrc is missing
   useEffect(() => {
     if (!activeTrack || activeTrack.lrc || !activeTrack.title || activeTrack.title === 'Media') {
       return;
@@ -1334,13 +1472,7 @@ export default function App() {
     let cancelled = false;
     const fetchMissingLyrics = async () => {
       try {
-        const params = new URLSearchParams({
-          track_name: activeTrack.title,
-          artist_name: activeTrack.artist || '',
-          q: `${activeTrack.title} ${activeTrack.artist || ''}`.trim(),
-        });
-        const res = await fetch(`/api/music/lyrics?${params.toString()}`);
-        const data = await res.json();
+        const data = await fetchLrclibLyrics(activeTrack.title, activeTrack.artist);
         if (!cancelled && data?.lrc) {
           setActiveTrack((prev) =>
             prev && prev.title === activeTrack.title
@@ -1363,7 +1495,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeTrack?.title, activeTrack?.artist, activeTrack?.lrc]);
+  }, [activeTrack?.title, activeTrack?.artist, activeTrack?.lrc, fetchLrclibLyrics]);
 
   // Listen to postMessages from embedded YouTube IFrame for full song stream timing
   // Guards against premature playerState === 0 events during initial buffer so tracks never jump mid-song
@@ -1538,7 +1670,7 @@ export default function App() {
       youtubeMusicUrl?: string;
       spotifyUrl?: string;
       lrc?: string;
-      syncType?: 'WORD' | 'LINE';
+      syncType?: LyricsSyncType;
       provider?: string;
       wordsByLine?: any[];
       lrclibId?: number;
@@ -2074,15 +2206,9 @@ export default function App() {
         sourceType: 'internal',
       });
 
-      // Automatically fetch synced lyrics from multi-provider chain
+      // Automatically fetch synced lyrics from LRCLIB
       try {
-        const params = new URLSearchParams({
-          track_name: titleGuess,
-          artist_name: artistGuess,
-          q: rawName,
-        });
-        const res = await fetch(`/api/music/lyrics?${params.toString()}`);
-        const data = await res.json();
+        const data = await fetchLrclibLyrics(titleGuess || rawName, artistGuess);
         if (data?.lrc) {
           setActiveTrack((prev) =>
             prev
@@ -2103,7 +2229,7 @@ export default function App() {
         // ignore
       }
     },
-    [loadAndPlayRealTrack]
+    [loadAndPlayRealTrack, fetchLrclibLyrics]
   );
 
   // Sync HTMLAudioElement volume with Dynamic Island volume & mute state
@@ -3153,7 +3279,23 @@ export default function App() {
 
   // Automatic Screen Capture for "ambil screenshot" / "tangkap layar" / "lihat layarku sekarang" commands
   const captureCurrentScreenAuto = useCallback(async (): Promise<PendingImageAttachment | null> => {
-    // 1. Try native OS screenshot via /api/system/screenshot (works on Windows host via PowerShell CopyFromScreen)
+    // 1. Try native desktop screenshot via Tauri Win32 GDI bridge
+    if (isTauri()) {
+      try {
+        const rawB64 = await getSystemScreenshot();
+        const cleanB64 = rawB64.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '');
+        return {
+          dataUrl: `data:image/png;base64,${cleanB64}`,
+          base64: cleanB64,
+          mimeType: 'image/png',
+          name: `screenshot-${Date.now()}.png`,
+        };
+      } catch (e) {
+        console.warn('[App] Native Tauri screenshot failed, falling back:', e);
+      }
+    }
+
+    // 2. Try native OS screenshot via /api/system/screenshot (legacy server fallback)
     try {
       const osRes = await fetch('/api/system/screenshot');
       if (osRes.ok) {
@@ -4077,8 +4219,10 @@ export default function App() {
       if (assistantOpen) {
         closeAssistantAndCollapse();
         setDesktopClickThrough(true);
+        void setInteractiveLock(false);
       } else {
         setDesktopClickThrough(false);
+        void setInteractiveLock(true);
         setShowAllChatHistory(false);
         setAssistantOpen(true);
         setAssistantMode(defaultAltQMode);

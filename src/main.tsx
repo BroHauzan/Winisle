@@ -32,12 +32,16 @@ if (typeof window !== 'undefined' && window.location.protocol === 'file:') {
 
 // Standalone desktop guard: If opened inside a regular external browser (Chrome/Edge/Firefox),
 // do NOT render the floating desktop overlay. Show a clean inactive service page and attempt to close the tab.
-const isElectron = Boolean(
-  (typeof window !== 'undefined' && (window as any).electronAPI) ||
+const isDesktopApp = Boolean(
+  (typeof window !== 'undefined' && (
+    (window as any).electronAPI ||
+    (window as any).__TAURI_INTERNALS__ ||
+    (window as any).__TAURI__
+  )) ||
   (typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent))
 );
 
-if (typeof window !== 'undefined' && !isElectron && window.location.protocol.startsWith('http')) {
+if (typeof window !== 'undefined' && !isDesktopApp && window.location.protocol.startsWith('http')) {
   try {
     window.open('', '_self')?.close();
     window.close();
