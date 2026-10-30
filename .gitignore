@@ -1,6 +1,5 @@
 /target
 gnome-extension/schemas/gschemas.compiled
-/dist
 /release
 /node_modules
 

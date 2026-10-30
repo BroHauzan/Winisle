@@ -2805,10 +2805,13 @@ export async function startServer(customPort?: number) {
     const candidateDistDirs = [
       process.env.ISLE_DIST_DIR,
       path.join(process.resourcesPath || '', 'app.asar.unpacked', 'dist'),
+      path.join(process.resourcesPath || '', 'app.asar', 'dist'),
       path.join(process.resourcesPath || '', 'dist'),
-      path.resolve(process.cwd(), 'dist'),
-      path.join(currentDir, 'dist'),
+      path.join(currentDir, '..', 'app.asar.unpacked', 'dist'),
       path.join(currentDir, '..', 'dist'),
+      path.join(currentDir, 'dist'),
+      path.resolve(process.cwd(), 'dist'),
+      path.resolve(process.cwd(), 'resources', 'app.asar.unpacked', 'dist'),
     ].filter(Boolean) as string[];
 
     const resolvedDistDir = candidateDistDirs.find((dir) => {

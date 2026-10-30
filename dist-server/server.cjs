@@ -72042,10 +72042,13 @@ async function startServer(customPort) {
     const candidateDistDirs = [
       process.env.ISLE_DIST_DIR,
       import_path.default.join(process.resourcesPath || "", "app.asar.unpacked", "dist"),
+      import_path.default.join(process.resourcesPath || "", "app.asar", "dist"),
       import_path.default.join(process.resourcesPath || "", "dist"),
-      import_path.default.resolve(process.cwd(), "dist"),
+      import_path.default.join(currentDir, "..", "app.asar.unpacked", "dist"),
+      import_path.default.join(currentDir, "..", "dist"),
       import_path.default.join(currentDir, "dist"),
-      import_path.default.join(currentDir, "..", "dist")
+      import_path.default.resolve(process.cwd(), "dist"),
+      import_path.default.resolve(process.cwd(), "resources", "app.asar.unpacked", "dist")
     ].filter(Boolean);
     const resolvedDistDir = candidateDistDirs.find((dir) => {
       try {
