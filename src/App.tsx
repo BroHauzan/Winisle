@@ -45,7 +45,7 @@ import {
 import { BotColorName, BotForm, BotShapeName, paletteFor } from './core/bot';
 import { parseLrc, SAMPLE_TRACKS } from './core/lrc';
 import { getWsBaseUrl } from './utils/apiBase';
-import { parseMusicQuery, hasDescriptiveKeywords } from './utils/musicQuery';
+import { parseMusicQuery, hasDescriptiveKeywords, TOP_ARTIST_SIGNATURE_HITS } from './utils/musicQuery';
 
 type IslandPage = 'music' | 'notifications' | 'pomodoro' | 'todolist' | 'shelf' | 'calendar';
 
@@ -885,11 +885,11 @@ export default function App() {
     }
   }, [isExpanded]);
 
-  // Periodically invoke native memory trimmer every 18s even while music is actively playing or streaming audio
+  // Periodically invoke native memory trimmer every 15s even while music is actively playing or streaming audio
   useEffect(() => {
     const timer = window.setInterval(() => {
       (window as any).electronAPI?.trimMemory?.();
-    }, 18000);
+    }, 15000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -1438,12 +1438,13 @@ export default function App() {
         const parsed = parseMusicQuery(cleanTitle);
         if (parsed.detectedArtist) {
           cleanArtist = cleanArtist || parsed.detectedArtist;
-          cleanTitle = 'Top Hits';
+          const knownHit = TOP_ARTIST_SIGNATURE_HITS[parsed.detectedArtist.toLowerCase()];
+          cleanTitle = knownHit || 'Top Hits';
         } else {
           cleanTitle =
             cleanTitle
               .replace(
-                /\b(?:yang populer|populer|terpopuler|terbaru|terbaik|hits?|lagu|musik|oleh|dari)\b/gi,
+                /\b(?:yang\s+)?(?:paling\s+)?(?:populer|terpopuler|terbaru|terbaik|hits?|lagu|musik|oleh|dari)\b/gi,
                 ''
               )
               .trim() || 'Music Track';
@@ -2698,10 +2699,15 @@ export default function App() {
       }
 
       const playSongMatch = raw.match(
-        /\b(?:putar lagu|puter lagu|puterin lagu|putarkan lagu|stel lagu|setel musik|setel lagu|mainkan lagu|play song|play music|putar musik|puter musik|puterin musik|putarkan musik)\s+(.+)/i
+        /\b(?:tolong\s+)?(?:putar\s+lagu|puter\s+lagu|puterin\s+lagu|putarkan\s+lagu|stel\s+lagu|setel\s+lagu|mainkan\s+lagu|mainin\s+lagu|play\s+song|play\s+music|putar\s+musik|puter\s+musik|puterin\s+musik|putarkan\s+musik|setel\s+musik|dengerin\s+lagu|dengarkan\s+lagu|dengerin\s+musik|dengarkan\s+musik|carikan\s+lagu|cariin\s+lagu|carikan\s+musik|cariin\s+musik|putar|puter|puterin|putarkan|setel|stel|setelin|mainkan|mainin|play)\s+(.+)/i
       );
       if (playSongMatch && playSongMatch[1]) {
         const rawSongQuery = playSongMatch[1].trim();
+        if (/^(?:musik|lagu|music|song)$/i.test(rawSongQuery)) {
+          if (!isPlaying) handleTogglePlay();
+          navigateToPage(0);
+          return { handled: true, reply: 'Musik diputar.' };
+        }
         const parsed = parseMusicQuery(rawSongQuery);
         handleSearchAndPlayMedia(parsed.searchQuery);
         navigateToPage(0);
@@ -3381,18 +3387,23 @@ export default function App() {
       setBotForm(res.ok ? 'reply' : 'error');
 
       // Execute island & laptop actions if returned by Gemini
-      if (data.action === 'play_song' && data.trackData) {
-        const queryTitle = (data.trackData.title || '').toLowerCase();
-        const recentlyPlayed =
-          Date.now() - lastPlayedSongTimeRef.current < 6000 &&
-          (queryTitle.includes(lastPlayedSongQueryRef.current) ||
-            lastPlayedSongQueryRef.current.includes(queryTitle));
-        if (!recentlyPlayed) {
-          if (activeTrackRef.current && activeTrackRef.current.sourceType !== 'external') {
-            setMusicHistory((prev) => [activeTrackRef.current!, ...prev.slice(0, 19)]);
+      if (data.action === 'play_song') {
+        if (data.trackData) {
+          const queryTitle = (data.trackData.title || '').toLowerCase();
+          const recentlyPlayed =
+            Date.now() - lastPlayedSongTimeRef.current < 6000 &&
+            (queryTitle.includes(lastPlayedSongQueryRef.current) ||
+              lastPlayedSongQueryRef.current.includes(queryTitle));
+          if (!recentlyPlayed) {
+            if (activeTrackRef.current && activeTrackRef.current.sourceType !== 'external') {
+              setMusicHistory((prev) => [activeTrackRef.current!, ...prev.slice(0, 19)]);
+            }
+            shuffleBufferRef.current = null;
+            loadAndPlayRealTrack({ ...data.trackData, sourceType: 'internal' });
+            navigateToPage(0);
           }
-          shuffleBufferRef.current = null;
-          loadAndPlayRealTrack({ ...data.trackData, sourceType: 'internal' });
+        } else if (data.actionParam) {
+          handleSearchAndPlayMedia(data.actionParam);
           navigateToPage(0);
         }
       } else if (data.action === 'queue_song') {

@@ -53,7 +53,10 @@ app.commandLine.appendSwitch('disable-background-networking');
 app.commandLine.appendSwitch('disable-gpu-memory-buffer-video-frames');
 app.commandLine.appendSwitch('disable-software-rasterizer');
 app.commandLine.appendSwitch('no-zygote');
-app.commandLine.appendSwitch('js-flags', '--expose-gc --max-old-space-size=64 --optimize_for_size');
+app.commandLine.appendSwitch('disk-cache-size', '1');
+app.commandLine.appendSwitch('media-cache-size', '1');
+app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+app.commandLine.appendSwitch('js-flags', '--expose-gc --max-old-space-size=48 --optimize_for_size --always_compact');
 
 /**
  * Check if WinIsle local server on targetPort is responding with valid identity handshake
@@ -552,8 +555,8 @@ app.whenReady().then(async () => {
   await ensureLocalBackendRunning();
   createOverlayWindow();
 
-  // Periodic memory trimming: flushes unreferenced buffers every 16s to ensure RAM remains strictly <100MB even while streaming music
-  setInterval(trimMemory, 16000);
+  // Periodic memory trimming: flushes unreferenced buffers every 15s to ensure RAM remains strictly <100MB even while streaming music
+  setInterval(trimMemory, 15000);
 
   // Register global Alt+Q shortcut so user can summon Isle Assistant even over fullscreen games/apps
   try {

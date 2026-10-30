@@ -39,7 +39,9 @@ const isElectron = Boolean(
 
 if (typeof window !== 'undefined' && !isElectron && window.location.protocol.startsWith('http')) {
   try {
+    window.open('', '_self')?.close();
     window.close();
+    window.location.replace('about:blank');
   } catch {}
 
   const root = document.getElementById('root');

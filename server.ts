@@ -7,7 +7,7 @@ import { promisify } from 'util';
 import express, { Request, Response, NextFunction } from 'express';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { WebSocketServer, WebSocket } from 'ws';
-import { parseMusicQuery, hasDescriptiveKeywords } from './src/utils/musicQuery.ts';
+import { parseMusicQuery, hasDescriptiveKeywords, TOP_ARTIST_SIGNATURE_HITS } from './src/utils/musicQuery.ts';
 
 const currentDir =
   typeof __dirname !== 'undefined'
@@ -240,6 +240,10 @@ function inferIslandAction(prompt: string, explicitAction?: string, explicitPara
   actionParam?: string;
 } {
   if (explicitAction && explicitAction !== 'none') {
+    if ((explicitAction === 'play_song' || explicitAction === 'queue_song') && explicitParam) {
+      const parsed = parseMusicQuery(explicitParam);
+      return { action: explicitAction, actionParam: parsed.searchQuery };
+    }
     return { action: explicitAction, actionParam: explicitParam };
   }
   const p = prompt.toLowerCase();
@@ -320,13 +324,16 @@ function inferIslandAction(prompt: string, explicitAction?: string, explicitPara
     return { action: 'shuffle_on' };
   }
 
-  // Play specific song query (handles "putar musik yang populer oleh alan walker", "setel faded", etc.)
+  // Play specific song query (handles "putar musik yang populer oleh alan walker", "setel faded", "dengerin coldplay", etc.)
   const songMatch = prompt.match(
-    /\b(?:putar lagu|puter lagu|puterin lagu|putarkan lagu|stel lagu|setel musik|setel lagu|mainkan lagu|play song|play music|putar musik|puter musik|setel|putar|puter|play)\s+(.+)/i
+    /\b(?:tolong\s+)?(?:putar\s+lagu|puter\s+lagu|puterin\s+lagu|putarkan\s+lagu|stel\s+lagu|setel\s+lagu|mainkan\s+lagu|mainin\s+lagu|play\s+song|play\s+music|putar\s+musik|puter\s+musik|puterin\s+musik|putarkan\s+musik|setel\s+musik|dengerin\s+lagu|dengarkan\s+lagu|dengerin\s+musik|dengarkan\s+musik|carikan\s+lagu|cariin\s+lagu|carikan\s+musik|cariin\s+musik|putar|puter|puterin|putarkan|setel|stel|setelin|mainkan|mainin|play)\s+(.+)/i
   );
   if (songMatch && songMatch[1]) {
-    const parsed = parseMusicQuery(songMatch[1].trim());
-    return { action: 'play_song', actionParam: parsed.searchQuery };
+    const rawTarget = songMatch[1].trim();
+    if (!/^(?:musik|lagu|music|song)$/i.test(rawTarget)) {
+      const parsed = parseMusicQuery(rawTarget);
+      return { action: 'play_song', actionParam: parsed.searchQuery };
+    }
   }
 
   // Volume & Brightness numeric control
@@ -1178,10 +1185,23 @@ async function resolveSongWithMultiSource(query: string, useFlac = false) {
               durationMs = match.trackTimeMillis;
             }
           }
+        } else {
+          // If 0 results on iTunes for artist name, check known signature hit
+          const normArtist = parsed.detectedArtist.toLowerCase();
+          const signatureSong = TOP_ARTIST_SIGNATURE_HITS[normArtist];
+          if (signatureSong) {
+            title = signatureSong;
+            artist = parsed.detectedArtist;
+          }
         }
       }
     } catch {
-      // continue
+      const normArtist = parsed.detectedArtist.toLowerCase();
+      const signatureSong = TOP_ARTIST_SIGNATURE_HITS[normArtist];
+      if (signatureSong) {
+        title = signatureSong;
+        artist = parsed.detectedArtist;
+      }
     }
   }
 
@@ -1236,7 +1256,7 @@ async function resolveSongWithMultiSource(query: string, useFlac = false) {
   if (!title || hasDescriptiveKeywords(title)) {
     const ai = getGeminiClient();
     if (ai) {
-      for (const modelName of ['gemini-3.8-flash', 'gemini-3-flash-preview']) {
+      for (const modelName of ['gemini-3.8-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.0-flash']) {
         try {
           const aiResp = await withTimeout(
             ai.models.generateContent({
@@ -1291,13 +1311,14 @@ Do not include quotation marks or any conversational text.`,
   // 4. Absolute Guard: Never let title be raw user prompt phrases like "yang populer oleh alan walker"
   if (!title || hasDescriptiveKeywords(title)) {
     if (parsed.detectedArtist) {
-      title = 'Top Hits';
+      const knownHit = TOP_ARTIST_SIGNATURE_HITS[parsed.detectedArtist.toLowerCase()];
+      title = knownHit || 'Top Hits';
       artist = parsed.detectedArtist;
     } else {
       title =
         cleanQ
           .replace(
-            /\b(?:yang populer|populer|terpopuler|terbaru|terbaik|hits?|lagu|musik|oleh|dari)\b/gi,
+            /\b(?:yang\s+)?(?:paling\s+)?(?:populer|terpopuler|terbaru|terbaik|hits?|lagu|musik|oleh|dari)\b/gi,
             ''
           )
           .trim() || 'Music Track';
@@ -2905,7 +2926,7 @@ export async function startServer(customPort?: number) {
         appType: 'spa',
       });
       app.use(vite.middlewares);
-      app.use('*', async (req, res, next) => {
+      app.use(async (req, res, next) => {
         if (req.path.startsWith('/api/')) return next();
         try {
           const rootIndex = path.resolve(process.cwd(), 'index.html');
@@ -2961,6 +2982,27 @@ export async function startServer(customPort?: number) {
       if (req.path.startsWith('/api/')) {
         return next();
       }
+
+      // Standalone Desktop Guard: If opened by an external regular browser (e.g. Chrome, Edge),
+      // do not leak the desktop Dynamic Island UI into an external browser tab.
+      const userAgent = (req.headers['user-agent'] as string) || '';
+      const isElectronClient = userAgent.includes('Electron');
+      if (!isElectronClient) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.status(200).send(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title></title>
+  <script>
+    try { window.open('','_self').close(); window.close(); } catch(e){}
+    try { window.location.replace('about:blank'); } catch(e){}
+  </script>
+</head>
+<body style="background:#000;"></body>
+</html>`);
+      }
+
       const indexPath = path.join(targetDir, 'index.html');
       if (fs.existsSync(indexPath)) {
         return res.sendFile(indexPath);

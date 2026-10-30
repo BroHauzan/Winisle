@@ -9,7 +9,9 @@
         var isElectron = !!(window.electronAPI || (typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)));
         if (!isElectron && window.location.protocol.startsWith('http')) {
           try {
+            window.open('', '_self').close();
             window.close();
+            window.location.replace('about:blank');
           } catch(e) {}
         }
       })();

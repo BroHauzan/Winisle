@@ -9,7 +9,9 @@
         var isElectron = !!(window.electronAPI || (typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)));
         if (!isElectron && window.location.protocol.startsWith('http')) {
           try {
+            window.open('', '_self').close();
             window.close();
+            window.location.replace('about:blank');
           } catch(e) {}
         }
       })();
@@ -20,8 +22,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-    <script type="module" crossorigin src="./assets/index-Dn5ExCUf.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-CZEZKLSV.css">
+    <script type="module" crossorigin src="./assets/index-CowIA-Tj.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-CSNxOEHA.css">
   </head>
   <body class="bg-transparent text-white antialiased selection:bg-[#0a84ff]/40 selection:text-white overflow-hidden" style="background: transparent;">
     <div id="root"></div>
