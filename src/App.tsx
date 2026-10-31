@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BeatEqualizerBars } from './components/BeatEqualizerBars';
 import { BotCanvas } from './components/BotCanvas';
 import { IslandSurface } from './components/IslandSurface';
+import { MarkdownText } from './components/MarkdownText';
 import {
   AlarmBellSvg,
   BackwardSkipSvg,
@@ -6689,9 +6690,10 @@ export default function App() {
                                     className="h-9 w-auto rounded border border-white/15 object-cover mb-1"
                                   />
                                 )}
-                                <div className="text-[11.5px] text-white/90 leading-relaxed select-text break-words">
-                                  {m.text}
-                                </div>
+                                <MarkdownText
+                                  content={m.text}
+                                  className="text-[11.5px] text-white/90 leading-relaxed"
+                                />
                               </div>
                             </div>
                           ))}
@@ -6719,14 +6721,15 @@ export default function App() {
                               title="Gambar / Screenshot yang dianalisis AI"
                             />
                           )}
-                          <div className="text-[11.5px] text-white/92 leading-relaxed select-text break-words flex-1 min-w-0">
-                            {animatingMsgId === latestAssistantMessage.id
-                              ? latestAssistantMessage.text.slice(0, revealedChars)
-                              : latestAssistantMessage.text}
-                            {animatingMsgId === latestAssistantMessage.id && (
-                              <span className="inline-block w-1.5 h-3 ml-0.5 align-middle bg-white/70 animate-pulse rounded-xs" />
-                            )}
-                          </div>
+                          <MarkdownText
+                            content={
+                              animatingMsgId === latestAssistantMessage.id
+                                ? latestAssistantMessage.text.slice(0, revealedChars)
+                                : latestAssistantMessage.text
+                            }
+                            isTyping={animatingMsgId === latestAssistantMessage.id}
+                            className="text-[11.5px] text-white/92 leading-relaxed flex-1 min-w-0"
+                          />
                         </div>
 
                         {/* Direct Button if Gemini API Key is missing */}
