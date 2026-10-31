@@ -47,7 +47,8 @@ pub fn run() {
                 {
                     use windows::Win32::Foundation::HWND;
                     use windows::Win32::Graphics::Dwm::{
-                        DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE,
+                        DwmSetWindowAttribute, DWMNCRP_DISABLED, DWMWA_BORDER_COLOR,
+                        DWMWA_NCRENDERING_POLICY, DWMWA_WINDOW_CORNER_PREFERENCE,
                         DWMWCP_DONOTROUND, DWM_WINDOW_CORNER_PREFERENCE,
                     };
                     use windows::Win32::UI::WindowsAndMessaging::{
@@ -57,35 +58,10 @@ pub fn run() {
                         WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
                     };
 
-                    #[repr(C)]
-                    #[allow(non_snake_case)]
-                    struct MARGINS {
-                        cxLeftWidth: i32,
-                        cxRightWidth: i32,
-                        cyTopHeight: i32,
-                        cyBottomHeight: i32,
-                    }
-
-                    extern "system" {
-                        fn DwmExtendFrameIntoClientArea(
-                            hwnd: HWND,
-                            pmarinset: *const MARGINS,
-                        ) -> windows::core::HRESULT;
-                    }
-
                     if let Ok(raw_hwnd) = window.hwnd() {
                         let hwnd = HWND(raw_hwnd.0);
                         unsafe {
-                            // 1. Extend glass into client area for proper transparency in WebView2
-                            let margins = MARGINS {
-                                cxLeftWidth: -1,
-                                cxRightWidth: -1,
-                                cyTopHeight: -1,
-                                cyBottomHeight: -1,
-                            };
-                            let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
-
-                            // 2. Strip caption, thickframe, minimize/maximize buttons, system menu and borders
+                            // 1. Strip all caption, borders, minimize/maximize buttons, and system menu
                             let mut style = GetWindowLongPtrW(hwnd, GWL_STYLE);
                             style &= !(WS_CAPTION.0 as isize
                                 | WS_THICKFRAME.0 as isize
@@ -97,7 +73,16 @@ pub fn run() {
                             style |= WS_POPUP.0 as isize;
                             SetWindowLongPtrW(hwnd, GWL_STYLE, style);
 
-                            // 3. Disable Windows 11 window corner rounding/borders
+                            // 2. Disable DWM Non-Client Rendering completely (eliminates title bar, buttons, and frame)
+                            let ncrp = DWMNCRP_DISABLED.0 as u32;
+                            let _ = DwmSetWindowAttribute(
+                                hwnd,
+                                DWMWA_NCRENDERING_POLICY,
+                                &ncrp as *const _ as *const _,
+                                std::mem::size_of::<u32>() as u32,
+                            );
+
+                            // 3. Disable Windows 11 window corner rounding
                             let corner_pref = DWMWCP_DONOTROUND;
                             let _ = DwmSetWindowAttribute(
                                 hwnd,
