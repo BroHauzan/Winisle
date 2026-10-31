@@ -113,7 +113,7 @@ pub fn spawn_cursor_monitor(app_handle: AppHandle, state: Arc<CursorMonitorState
                 if state.is_locked_interactive.load(Ordering::Relaxed) {
                     if state.currently_ignoring.load(Ordering::Relaxed) {
                         if let Some(win) = app_handle.get_webview_window("main") {
-                            let _ = win.set_ignore_cursor_events(false);
+                            crate::window_decorations::set_click_through(&win, false);
                             state.currently_ignoring.store(false, Ordering::Relaxed);
                         }
                     }
@@ -162,7 +162,7 @@ pub fn spawn_cursor_monitor(app_handle: AppHandle, state: Arc<CursorMonitorState
 
                 if is_far_away {
                     if !state.currently_ignoring.load(Ordering::Relaxed) {
-                        let _ = win.set_ignore_cursor_events(true);
+                        crate::window_decorations::set_click_through(&win, true);
                         state.currently_ignoring.store(true, Ordering::Relaxed);
                     }
                     std::thread::sleep(std::time::Duration::from_millis(150));
@@ -195,10 +195,10 @@ pub fn spawn_cursor_monitor(app_handle: AppHandle, state: Arc<CursorMonitorState
                 let currently_ignoring = state.currently_ignoring.load(Ordering::Relaxed);
 
                 if is_inside && currently_ignoring {
-                    let _ = win.set_ignore_cursor_events(false);
+                    crate::window_decorations::set_click_through(&win, false);
                     state.currently_ignoring.store(false, Ordering::Relaxed);
                 } else if !is_inside && !currently_ignoring {
-                    let _ = win.set_ignore_cursor_events(true);
+                    crate::window_decorations::set_click_through(&win, true);
                     state.currently_ignoring.store(true, Ordering::Relaxed);
                 }
 
@@ -227,7 +227,7 @@ pub fn set_interactive_lock(
 ) -> Result<(), String> {
     state.is_locked_interactive.store(locked, Ordering::Relaxed);
     if locked {
-        let _ = window.set_ignore_cursor_events(false);
+        crate::window_decorations::set_click_through(&window, false);
         state.currently_ignoring.store(false, Ordering::Relaxed);
     }
     Ok(())
@@ -240,9 +240,8 @@ pub fn set_click_through(
     state: State<'_, Arc<CursorMonitorState>>,
 ) -> Result<(), String> {
     state.currently_ignoring.store(ignore, Ordering::Relaxed);
-    window
-        .set_ignore_cursor_events(ignore)
-        .map_err(|e| e.to_string())
+    crate::window_decorations::set_click_through(&window, ignore);
+    Ok(())
 }
 
 #[command]

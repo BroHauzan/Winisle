@@ -5,3 +5,6 @@ gnome-extension/schemas/gschemas.compiled
 
 src-tauri/target/
 .agents/
+.env
+.env.local
+

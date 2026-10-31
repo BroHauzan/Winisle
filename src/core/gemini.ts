@@ -3,6 +3,23 @@
  * Supports Multimodal Vision (screenshots/images), Chat History, and Action Intent Detection.
  */
 
+/**
+ * Configurable active Gemini model.
+ * Defaults to `gemini-3.8-flash` (recommended by Google AI Studio for all new requests),
+ * or can be configured via `VITE_GEMINI_MODEL` environment variable.
+ */
+export const DEFAULT_GEMINI_MODEL =
+  (import.meta.env.VITE_GEMINI_MODEL as string)?.trim() || 'gemini-3.8-flash';
+
+export const SUPPORTED_GEMINI_MODELS = [
+  DEFAULT_GEMINI_MODEL,
+  'gemini-3.8-flash',
+  'gemini-3.1-flash',
+  'gemini-3.8-flash-lite',
+  'gemini-3.8-pro',
+  'gemini-3-flash-preview',
+];
+
 export interface GeminiAssistantParams {
   prompt: string;
   apiKey?: string;
@@ -87,23 +104,16 @@ export async function askGeminiAssistant(
     parts: userParts,
   });
 
-  // Candidate models sequence starting with gemini-3.1-flash-lite as requested by user
-  const candidateModels = params.model
-    ? [
-        params.model,
-        'gemini-3.1-flash-lite',
-        'gemini-3.1-flash-lite-preview',
-        'gemini-2.0-flash',
-        'gemini-1.5-flash',
-        'gemini-2.5-flash',
-      ]
-    : [
-        'gemini-3.1-flash-lite',
-        'gemini-3.1-flash-lite-preview',
-        'gemini-2.0-flash',
-        'gemini-1.5-flash',
-        'gemini-2.5-flash',
-      ];
+  // Sequence of candidate models starting with user/env configured model (default: gemini-3.8-flash)
+  const activeModel = params.model?.trim() || DEFAULT_GEMINI_MODEL;
+  const candidateModels = [
+    activeModel,
+    'gemini-3.8-flash',
+    'gemini-3.1-flash',
+    'gemini-3.8-flash-lite',
+    'gemini-3.8-pro',
+    'gemini-3-flash-preview',
+  ];
   const models = Array.from(new Set(candidateModels));
   let lastError = '';
 
