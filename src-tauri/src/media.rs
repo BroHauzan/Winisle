@@ -1,7 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{command, AppHandle, Emitter};
+
+fn cached_media_info() -> &'static Mutex<Option<SystemMediaInfo>> {
+    static CACHE: OnceLock<Mutex<Option<SystemMediaInfo>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct SystemMediaInfo {
@@ -65,10 +70,11 @@ mod win_media {
         let async_props = session.TryGetMediaPropertiesAsync().ok()?;
         let props = async_props.get().ok()?;
         let thumb_ref = props.Thumbnail().ok()?;
+
         let async_stream = thumb_ref.OpenReadAsync().ok()?;
         let stream = async_stream.get().ok()?;
         let size = stream.Size().ok()? as u32;
-        if size == 0 || size > 5_000_000 {
+        if size == 0 || size > 2_000_000 {
             return None;
         }
         let content_type = stream.ContentType().ok()?.to_string();
@@ -256,14 +262,7 @@ mod win_media {
 
 #[command]
 pub fn get_system_media() -> Result<Option<SystemMediaInfo>, String> {
-    #[cfg(target_os = "windows")]
-    {
-        win_media::query_current_media()
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Ok(None)
-    }
+    Ok(cached_media_info().lock().unwrap().clone())
 }
 
 #[command]
@@ -288,12 +287,20 @@ pub fn spawn_media_monitor(app_handle: AppHandle) {
     std::thread::Builder::new()
         .name("winisle-media-monitor".into())
         .spawn(move || {
+            #[cfg(target_os = "windows")]
+            unsafe {
+                use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            }
+
             let mut last_info: Option<SystemMediaInfo> = None;
 
             while running.load(Ordering::Relaxed) {
                 #[cfg(target_os = "windows")]
                 {
                     if let Ok(current) = win_media::query_current_media() {
+                        *cached_media_info().lock().unwrap() = current.clone();
+
                         let should_emit = match (&last_info, &current) {
                             (None, Some(_)) => true,
                             (Some(_), None) => true,
@@ -322,3 +329,16 @@ pub fn spawn_media_monitor(app_handle: AppHandle) {
         })
         .expect("Failed to spawn system media monitor thread");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_query_current_media_does_not_hang() {
+        println!("Calling get_system_media...");
+        let res = get_system_media();
+        println!("get_system_media result: {:?}", res);
+    }
+}
+

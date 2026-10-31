@@ -4,23 +4,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WinIsle</title>
-    <script>
-      (function() {
-        var isDesktop = !!(
-          window.electronAPI ||
-          window.__TAURI_INTERNALS__ ||
-          window.__TAURI__ ||
-          (typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent))
-        );
-        if (!isDesktop && window.location.protocol.startsWith('http')) {
-          try {
-            window.open('', '_self').close();
-            window.close();
-            window.location.replace('about:blank');
-          } catch(e) {}
-        }
-      })();
-    </script>
     <meta name="description" content="Standalone frameless Dynamic Island desktop overlay for Windows with synced lyrics, calls, Pomodoro focus timer, reminders, clipboard & file shelf, calendar, system alerts, and voice assistant." />
     <meta property="og:title" content="WinIsle" />
     <meta property="og:description" content="Standalone frameless Dynamic Island desktop overlay for Windows with synced lyrics, calls, Pomodoro focus timer, reminders, clipboard & file shelf, calendar, system alerts, and voice assistant." />

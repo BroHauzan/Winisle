@@ -10,6 +10,12 @@ pub mod tray;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        // Prevent Windows from ghosting the frameless overlay and showing "(Not Responding)" title bar
+        windows::Win32::UI::WindowsAndMessaging::DisableProcessWindowsGhosting();
+    }
+
     let cursor_state = Arc::new(cursor::CursorMonitorState::new());
     let cursor_state_clone = cursor_state.clone();
 
@@ -45,16 +51,41 @@ pub fn run() {
                         DWMWCP_DONOTROUND, DWM_WINDOW_CORNER_PREFERENCE,
                     };
                     use windows::Win32::UI::WindowsAndMessaging::{
-                        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
+                        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_STYLE,
                         SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_BORDER,
-                        WS_CAPTION, WS_DLGFRAME, WS_EX_LAYERED, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
+                        WS_CAPTION, WS_DLGFRAME, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
                         WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
                     };
+
+                    #[repr(C)]
+                    #[allow(non_snake_case)]
+                    struct MARGINS {
+                        cxLeftWidth: i32,
+                        cxRightWidth: i32,
+                        cyTopHeight: i32,
+                        cyBottomHeight: i32,
+                    }
+
+                    extern "system" {
+                        fn DwmExtendFrameIntoClientArea(
+                            hwnd: HWND,
+                            pmarinset: *const MARGINS,
+                        ) -> windows::core::HRESULT;
+                    }
 
                     if let Ok(raw_hwnd) = window.hwnd() {
                         let hwnd = HWND(raw_hwnd.0);
                         unsafe {
-                            // 1. Strip all caption, thickframe, minimize/maximize buttons, system menu and borders
+                            // 1. Extend glass into client area for proper transparency in WebView2
+                            let margins = MARGINS {
+                                cxLeftWidth: -1,
+                                cxRightWidth: -1,
+                                cyTopHeight: -1,
+                                cyBottomHeight: -1,
+                            };
+                            let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+
+                            // 2. Strip caption, thickframe, minimize/maximize buttons, system menu and borders
                             let mut style = GetWindowLongPtrW(hwnd, GWL_STYLE);
                             style &= !(WS_CAPTION.0 as isize
                                 | WS_THICKFRAME.0 as isize
@@ -65,11 +96,6 @@ pub fn run() {
                                 | WS_DLGFRAME.0 as isize);
                             style |= WS_POPUP.0 as isize;
                             SetWindowLongPtrW(hwnd, GWL_STYLE, style);
-
-                            // 2. Ensure layered window style for true alpha transparency
-                            let mut ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-                            ex_style |= WS_EX_LAYERED.0 as isize;
-                            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style);
 
                             // 3. Disable Windows 11 window corner rounding/borders
                             let corner_pref = DWMWCP_DONOTROUND;
